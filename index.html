@@ -850,7 +850,7 @@ function compressImage(file) {
 }
 
 const ZHIPU_API_KEY = "10958c6070354706a29697a3638dae67.m1QxIgwelW6rN3gP";
-const ZHIPU_PROMPT = '请识别图片中的错题内容，严格输出 JSON（不要输出 markdown 代码块标记），格式如下：{"question":"题干全文","options":"A. 内容\nB. 内容\nC. 内容\nD. 内容","answer":"正确答案字母，无则空","analysis":"解析，无则空"}';
+const ZHIPU_PROMPT = '请识别图片中的错题内容，严格输出 JSON（不要输出 markdown 代码块标记），格式如下：{"question":"题干全文","options":"A. 内容\nB. 内容\nC. 内容\nD. 内容","answer":"正确答案字母，无则空","analysis":"解析，无则空","category":"所属板块，从【言语理解与表达、常识判断、判断推理、数量关系、资料分析、政治理论】中判断，无法判断则空"}';
 
 function zhipuOCR(dataUrl) {
   return fetch("https://open.bigmodel.cn/api/paas/v4/chat/completions", {
@@ -883,6 +883,7 @@ function zhipuOCR(dataUrl) {
       options: obj.options || "",
       answer: obj.answer || "",
       analysis: obj.analysis || "",
+      category: obj.category || "",
     };
   });
 }
@@ -945,6 +946,11 @@ function handleFile(file) {
     $("#fOptions").value = parsed.options;
     $("#fAnswer").value = parsed.answer;
     $("#fAnalysis").value = parsed.analysis;
+    if (parsed.category) {
+      const catSel = $("#fCategoryNew");
+      const matched = Array.prototype.some.call(catSel.options, function (o) { return o.value === parsed.category; });
+      if (matched) catSel.value = parsed.category;
+    }
     $("#uploadStatus").textContent = "AI 识别完成，请核对";
   }).catch(function (e) {
     // 智谱失败，回退 Tesseract.js
