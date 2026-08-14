@@ -84,8 +84,10 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
 .bar-fill span { color: #fff; font-size: 11px; padding: 0 8px; font-weight: 600; }
 .pie-wrap { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
 .pie-svg { width: 240px; height: 240px; flex: 0 0 auto; }
+.pie-svg path { cursor: pointer; }
 .pie-legend { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 180px; }
-.pie-legend-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.pie-legend-item { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.pie-legend-item.active { background: #eef2ff; border-radius: 8px; padding: 4px 8px; }
 .pie-legend-dot { width: 12px; height: 12px; border-radius: 3px; flex: 0 0 auto; }
 .pie-legend-name { color: var(--text); flex: 0 0 auto; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pie-legend-val { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -413,7 +415,9 @@ function renderPieChart(data) {
   const cx = 130, cy = 130, r = 100;
   let paths = "";
   if (entries.length === 1) {
-    paths = '<circle cx="130" cy="130" r="100" fill="' + colors[0] + '" stroke="#fff" stroke-width="2"></circle>';
+    const cat0 = entries[0][0];
+    const active0 = state.filters.category === cat0 ? 1 : 0.35;
+    paths = '<circle cx="130" cy="130" r="100" fill="' + colors[0] + '" stroke="#fff" stroke-width="2" data-category="' + esc(cat0) + '" opacity="' + active0 + '"></circle>';
   } else {
     let angle = -90;
     entries.forEach(function (e, i) {
@@ -424,12 +428,14 @@ function renderPieChart(data) {
       angle += pct;
       const x2 = cx + r * Math.cos(angle * Math.PI / 180);
       const y2 = cy + r * Math.sin(angle * Math.PI / 180);
-      paths += '<path d="M ' + cx + ' ' + cy + ' L ' + x1.toFixed(3) + ' ' + y1.toFixed(3) + ' A ' + r + ' ' + r + ' 0 ' + largeArc + ' 1 ' + x2.toFixed(3) + ' ' + y2.toFixed(3) + ' Z" fill="' + colors[i % colors.length] + '" stroke="#fff" stroke-width="2"></path>';
+      const active = state.filters.category === e[0] ? 1 : 0.35;
+      paths += '<path d="M ' + cx + ' ' + cy + ' L ' + x1.toFixed(3) + ' ' + y1.toFixed(3) + ' A ' + r + ' ' + r + ' 0 ' + largeArc + ' 1 ' + x2.toFixed(3) + ' ' + y2.toFixed(3) + ' Z" fill="' + colors[i % colors.length] + '" stroke="#fff" stroke-width="2" data-category="' + esc(e[0]) + '" opacity="' + active + '"></path>';
     });
   }
   const legend = entries.map(function (e, i) {
     const pct = total > 0 ? ((e[1] / total) * 100).toFixed(1) : "0.0";
-    return '<div class="pie-legend-item">' +
+    const activeCls = state.filters.category === e[0] ? " active" : "";
+    return '<div class="pie-legend-item' + activeCls + '" data-category="' + esc(e[0]) + '">' +
       '<span class="pie-legend-dot" style="background:' + colors[i % colors.length] + '"></span>' +
       '<span class="pie-legend-name" title="' + esc(e[0]) + '">' + esc(e[0]) + '</span>' +
       '<span class="pie-legend-val">' + e[1] + ' 题 · ' + pct + '%</span>' +
@@ -448,6 +454,24 @@ function renderStats() {
   $("#stOk").textContent = s.mastery["已掌握"] || 0;
   $("#stReview").textContent = s.mastery["需复习"] || 0;
   $("#chartCategory").innerHTML = renderPieChart(s.categories);
+  $("#chartCategory").onclick = function (e) {
+    const el = e.target.closest("[data-category]");
+    if (el) filterByCategory(el.dataset.category);
+  };
+}
+
+function filterByCategory(cat) {
+  if (state.filters.category === cat) {
+    state.filters.category = "";
+  } else {
+    state.filters.category = cat;
+  }
+  const catSel = $("#fCategory");
+  if (catSel) catSel.value = state.filters.category;
+  renderStats();
+  applyFilters();
+  const list = $("#list");
+  if (list) list.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function populateFilters() {
