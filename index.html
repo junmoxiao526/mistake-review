@@ -121,7 +121,6 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
   font-size: 11px; padding: 3px 9px; border-radius: 20px; font-weight: 500;
 }
 .tag-cat { background: #eef2ff; color: #4f46e5; }
-.tag-type { background: #f0fdf4; color: #16a34a; }
 .tag-cat-edit { cursor: pointer; border: none; font-family: inherit; transition: all .15s; }
 .tag-cat-edit:hover { background: #dbe3ff; box-shadow: 0 0 0 1px #4f46e5; }
 .cat-chip {
@@ -296,10 +295,6 @@ footer { text-align: center; color: #9ca3af; font-size: 12px; padding: 20px 0; }
         <select id="fCategoryNew"><option value="">请选择板块</option></select>
       </div>
       <div class="form-item">
-        <label>题型</label>
-        <select id="fTypeNew"><option value="">请选择题型</option></select>
-      </div>
-      <div class="form-item">
         <label>解析</label>
         <textarea id="fAnalysis" rows="3" placeholder="手动填写解析（可选）"></textarea>
       </div>
@@ -396,19 +391,17 @@ function getMastery(id) {
 }
 
 function calcStats(questions) {
-  const categories = {}, types = {}, reasons = {}, mastery = { "未掌握": 0, "已掌握": 0, "需复习": 0 };
+  const categories = {}, reasons = {}, mastery = { "未掌握": 0, "已掌握": 0, "需复习": 0 };
   questions.forEach(function (q) {
     const c = q.category || "未分类";
-    const t = q.type || "未分类";
     const r = q.error_reason || "未填写";
     categories[c] = (categories[c] || 0) + 1;
-    types[t] = (types[t] || 0) + 1;
     reasons[r] = (reasons[r] || 0) + 1;
     const m = getMastery(q.id);
     if (Object.prototype.hasOwnProperty.call(mastery, m)) mastery[m] += 1;
     else mastery[DEFAULT_MASTERY] += 1;
   });
-  return { total: questions.length, categories: categories, types: types, reasons: reasons, mastery: mastery };
+  return { total: questions.length, categories: categories, reasons: reasons, mastery: mastery };
 }
 
 function renderPieChart(data) {
@@ -519,7 +512,6 @@ function renderCard(q, idx) {
     '<div class="q-head">' +
       '<span class="q-no">第 ' + (idx + 1) + ' 题</span>' +
       '<button type="button" class="tag tag-cat tag-cat-edit" data-id="' + esc(q.id) + '" data-category="' + esc(q.category || "未分类") + '" title="点击编辑板块">' + esc(q.category || "未分类") + '</button>' +
-      '<span class="tag tag-type">' + esc(q.type || "未分类") + '</span>' +
     '</div>' +
     '<div class="q-text">' + esc(q.question) + '</div>' +
     optsHtml +
@@ -694,16 +686,13 @@ function closeUploadModal() {
 }
 
 function fillUploadSelects() {
-  const catSel = $("#fCategoryNew"), typeSel = $("#fTypeNew");
-  const catSet = {}, typeSet = {};
+  const catSel = $("#fCategoryNew");
+  const catSet = {};
   allQuestions.forEach(function (q) {
     if (q.category) catSet[q.category] = 1;
-    if (q.type) typeSet[q.type] = 1;
   });
   catSel.innerHTML = '<option value="">请选择板块</option>' +
     Object.keys(catSet).map(function (c) { return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; }).join("");
-  typeSel.innerHTML = '<option value="">请选择题型</option>' +
-    Object.keys(typeSet).map(function (t) { return '<option value="' + esc(t) + '">' + esc(t) + '</option>'; }).join("");
 }
 
 function splitQuestionOptions(lines) {
@@ -879,7 +868,7 @@ function handleFile(file) {
       const parsed = splitQuestionOptions(lines);
       $("#fQuestion").value = parsed.question;
       $("#fOptions").value = parsed.options;
-      $("#uploadStatus").textContent = "识别完成，请核对题干与选项并补充答案/板块/题型/解析";
+      $("#uploadStatus").textContent = "识别完成，请核对题干与选项并补充答案/板块/解析";
     }).catch(function (e2) {
       $("#uploadStatus").textContent = "识别失败：" + (e2 && e2.message ? e2.message : e2);
     });
@@ -898,7 +887,6 @@ function saveNewQuestion() {
     options: $("#fOptions").value.trim(),
     answer: $("#fAnswer").value.trim(),
     category: $("#fCategoryNew").value,
-    type: $("#fTypeNew").value,
     error_reason: "",
     analysis: $("#fAnalysis").value.trim(),
     created_at: new Date().toISOString(),
