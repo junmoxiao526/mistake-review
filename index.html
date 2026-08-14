@@ -666,15 +666,11 @@ function buildPrintHtml(qs) {
   parts.push('<div class="print-title">WaytoGWY 错题复盘导出</div>');
   parts.push('<div class="print-subtitle">共 ' + qs.length + ' 道错题 | ' + scopeLabel() + ' | ' + date + '</div>');
   qs.forEach(function (q, i) {
-    const answer = (q.answer || "").trim();
-    const analysis = (q.analysis || "").trim();
     let html = '<div class="pq">';
     html += '<div class="pq-text">' + (i + 1) + '. ' + esc(q.question) + '</div>';
     splitOptions(q.options).forEach(function (o) {
       html += '<div class="pq-opt">' + esc(o) + '</div>';
     });
-    html += '<div class="pq-ans">正确答案：' + (answer ? esc(answer) : "未记录") + '</div>';
-    if (analysis) html += '<div class="pq-analysis">解析：' + esc(analysis) + '</div>';
     html += '<hr class="pq-divider">';
     html += '</div>';
     parts.push(html);
