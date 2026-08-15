@@ -69,6 +69,8 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
 .btn-ghost:hover { background: rgba(255,255,255,.22); transform: translateY(-1px); }
 .btn-outline { background: #fff; color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow-sm); }
 .btn-outline:hover { border-color: var(--primary); color: var(--primary); box-shadow: 0 4px 12px rgba(59,110,245,.15); transform: translateY(-1px); }
+.btn-danger { background: #fff; color: #e5484d; border: 1px solid #f3c1c3; box-shadow: var(--shadow-sm); }
+.btn-danger:hover { background: #e5484d; color: #fff; border-color: #e5484d; box-shadow: 0 4px 12px rgba(229,72,77,.2); transform: translateY(-1px); }
 .container { max-width: 1100px; margin: 0 auto; padding: 24px 20px 60px; }
 
 .stat-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
@@ -581,7 +583,7 @@ function applyFilters() {
   const f = state.filters;
   const kw = f.keyword;
   state.questions = allQuestions.filter(function (q) {
-    if (f.category && q.category !== f.category) return false;
+    if (f.category && (q.category || "未分类") !== f.category) return false;
     if (f.mastery && q.mastery !== f.mastery) return false;
     if (kw && !matchesKeyword(q, kw)) return false;
     return true;
@@ -625,6 +627,7 @@ function renderCard(q, idx) {
     '<div class="q-foot">' +
       '<div class="mastery-group">' + masteryBtns + '</div>' +
       '<button class="btn btn-outline show-answer-btn">显示答案</button>' +
+      '<button class="btn btn-danger delete-btn" data-id="' + esc(q.id) + '">删除</button>' +
     '</div>' +
     '<div class="answer-panel">' + rows.join("") + '</div>' +
   '</div>';
@@ -771,6 +774,23 @@ document.addEventListener("click", function (e) {
     const open = panel.classList.toggle("open");
     sb.textContent = open ? "隐藏答案" : "显示答案";
   }
+  const db = e.target.closest(".delete-btn");
+  if (db) {
+    const id = db.dataset.id;
+    if (!confirm("确定删除这道错题吗？删除后不可恢复")) return;
+    supabaseClient.from("questions").delete().eq("id", id)
+      .then(function (res) {
+        if (res.error) {
+          alert("删除失败：" + res.error.message);
+          return;
+        }
+        allQuestions = allQuestions.filter(function (q) { return q.id !== id; });
+        delete masteryMap[id];
+        serverStats = null;
+        renderStats();
+        applyFilters();
+      });
+  }
 });
 
 init();
@@ -840,7 +860,7 @@ function compressImage(file) {
 }
 
 const ZHIPU_API_KEY = "10958c6070354706a29697a3638dae67.m1QxIgwelW6rN3gP";
-const ZHIPU_PROMPT = '请识别图片中的错题内容，严格输出 JSON（不要输出 markdown 代码块标记），格式如下：{"question":"题干全文","options":"A. 内容\\nB. 内容\\nC. 内容\\nD. 内容","answer":"正确答案字母，无则空","analysis":"解析，无则空","category":"所属板块，从【言语理解与表达、常识判断、判断推理、数量关系、资料分析、政治理论】中判断，无法判断则空"}。识别规则（务必严格遵守）：1. question 字段只包含题目正文（含问句），严禁混入任何选项内容；2. options 字段每行一个选项，必须以 A./B./C./D. 等字母加点开头，严禁把题干内容当作选项；若某选项跨行则合并到同一行；若图片中题目没有选项（如填空/简答），options 输出空字符串；3. 题干与选项必须严格分离，题干中的文字（包括带字母编号的题干）一律归入 question，只有真正的选项才归入 options；4. 特殊题型处理：语句排序题中，题干为 ① ② ③ 等圆圈数字编号的多句话，全部编号句子及排序要求（如"对上述语句排序，最连贯的一项是"）归入 question，选项为 A./B./C./D. 加数字排列序列（如 A. ④②③①⑦⑤⑥），每行一个选项归入 options；若题干中某行以 A./B./C./D. 等字母加点开头且其后为简短内容，则该行属于选项而非题干；若图片中题干与选项之间有明显分隔（横线/空行），以分隔为界严格划分。';
+const ZHIPU_PROMPT = '请识别图片中的错题内容，严格输出 JSON（不要输出 markdown 代码块标记），格式如下：{"question":"题干全文","options":"A. 内容\\nB. 内容\\nC. 内容\\nD. 内容","answer":"正确答案字母，无则空","analysis":"解析，无则空","category":"所属板块，从【言语理解与表达、常识判断、判断推理、数量关系、资料分析、政治理论】中判断，无法判断则空"}。识别规则（务必严格遵守）：1. question 字段只包含题目正文（含问句），严禁混入任何选项内容；2. options 字段每行一个选项，必须以 A./B./C./D. 等字母加点开头，严禁把题干内容当作选项；若某选项跨行则合并到同一行；若图片中题目没有选项（如填空/简答），options 输出空字符串；3. 题干与选项必须严格分离，题干中的文字（包括带字母编号的题干）一律归入 question，只有真正的选项才归入 options；4. 特殊题型处理：语句排序题中，题干为 ① ② ③ 等圆圈数字编号的多句话，全部编号句子及排序要求（如"对上述语句排序，最连贯的一项是"）归入 question，选项为 A./B./C./D. 加数字排列序列（如 A. ④②③①⑦⑤⑥），每行一个选项归入 options；若题干中某行以 A./B./C./D. 等字母加点开头且其后为简短内容，则该行属于选项而非题干；若图片中题干与选项之间有明显分隔（横线/空行），以分隔为界严格划分；5. 考公常见题型识别规则：逻辑填空，题干含空格（____ 或 （ ）），选项为词语，每行一个选项；片段阅读/篇章阅读，题干为一段文字加问题，选项为 A./B./C./D. 文字；语句表达（排序/衔接/病句），排序题按第4条处理，语句衔接题题干为带空段的文字、选项为句子；定义判断，题干为定义描述，选项为 A./B./C./D. 案例描述；类比推理，题干为"XX：XX"或"XX 对于 XX 相当于 XX 对于 XX"，选项为 A./B./C./D. 词语对；图形推理，题干为图形（AI 无法识别图形细节），question 输出题号与题目要求文字（如"从所给的四个选项中，选择最合适的一个填入问号处"），options 输出 A./B./C./D. 字母占位；数量关系/数字推理，题干为数学题文字，选项为数字，每行一个；资料分析，题干包含材料（文字/表格/图表）与若干小题，材料与问题归入 question，各小题选项归入 options；常识判断/政治理论，题干为陈述加问题，选项为 A./B./C./D. 文字。';
 
 function zhipuOCR(dataUrl) {
   return fetch("https://open.bigmodel.cn/api/paas/v4/chat/completions", {
