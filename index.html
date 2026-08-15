@@ -840,7 +840,7 @@ function compressImage(file) {
 }
 
 const ZHIPU_API_KEY = "10958c6070354706a29697a3638dae67.m1QxIgwelW6rN3gP";
-const ZHIPU_PROMPT = '请识别图片中的错题内容，严格输出 JSON（不要输出 markdown 代码块标记），格式如下：{"question":"题干全文","options":"A. 内容\\nB. 内容\\nC. 内容\\nD. 内容","answer":"正确答案字母，无则空","analysis":"解析，无则空","category":"所属板块，从【言语理解与表达、常识判断、判断推理、数量关系、资料分析、政治理论】中判断，无法判断则空"}。识别规则（务必严格遵守）：1. question 字段只包含题目正文（含问句），严禁混入任何选项内容；2. options 字段每行一个选项，必须以 A./B./C./D. 等字母加点开头，严禁把题干内容当作选项；若某选项跨行则合并到同一行；若图片中题目没有选项（如填空/简答），options 输出空字符串；3. 题干与选项必须严格分离，题干中的文字（包括带字母编号的题干）一律归入 question，只有真正的选项才归入 options。';
+const ZHIPU_PROMPT = '请识别图片中的错题内容，严格输出 JSON（不要输出 markdown 代码块标记），格式如下：{"question":"题干全文","options":"A. 内容\\nB. 内容\\nC. 内容\\nD. 内容","answer":"正确答案字母，无则空","analysis":"解析，无则空","category":"所属板块，从【言语理解与表达、常识判断、判断推理、数量关系、资料分析、政治理论】中判断，无法判断则空"}。识别规则（务必严格遵守）：1. question 字段只包含题目正文（含问句），严禁混入任何选项内容；2. options 字段每行一个选项，必须以 A./B./C./D. 等字母加点开头，严禁把题干内容当作选项；若某选项跨行则合并到同一行；若图片中题目没有选项（如填空/简答），options 输出空字符串；3. 题干与选项必须严格分离，题干中的文字（包括带字母编号的题干）一律归入 question，只有真正的选项才归入 options；4. 特殊题型处理：语句排序题中，题干为 ① ② ③ 等圆圈数字编号的多句话，全部编号句子及排序要求（如"对上述语句排序，最连贯的一项是"）归入 question，选项为 A./B./C./D. 加数字排列序列（如 A. ④②③①⑦⑤⑥），每行一个选项归入 options；若题干中某行以 A./B./C./D. 等字母加点开头且其后为简短内容，则该行属于选项而非题干；若图片中题干与选项之间有明显分隔（横线/空行），以分隔为界严格划分。';
 
 function zhipuOCR(dataUrl) {
   return fetch("https://open.bigmodel.cn/api/paas/v4/chat/completions", {
@@ -878,6 +878,34 @@ function zhipuOCR(dataUrl) {
   });
 }
 
+function normalizeParsed(parsed) {
+  if (!parsed) return parsed;
+  var qLines = String(parsed.question || "").split("\n");
+  var optLines = String(parsed.options || "").split("\n");
+  var moved = [], kept = [];
+  qLines.forEach(function (line) {
+    if (/^[A-E]\s*[.、．)）]/.test(line)) moved.push(line);
+    else kept.push(line);
+  });
+  optLines.forEach(function (line) {
+    if (line.trim()) moved.push(line);
+  });
+  var seen = {}, merged = [];
+  moved.forEach(function (line) {
+    var m = line.match(/^([A-E])\s*[.、．)）]/);
+    if (m) {
+      var letter = m[1].toUpperCase();
+      if (seen[letter]) return;
+      seen[letter] = true;
+    }
+    merged.push(line);
+  });
+  var newQuestion = kept.join("\n").trim();
+  if (newQuestion) parsed.question = newQuestion;
+  parsed.options = merged.join("\n");
+  return parsed;
+}
+
 function handleFile(file) {
   if (!file) return;
   $("#uploadStatus").textContent = "正在压缩图片…";
@@ -886,6 +914,7 @@ function handleFile(file) {
     return zhipuOCR(dataUrl);
   }).then(function (parsed) {
     if (!parsed.question) throw new Error("AI 未识别出题干");
+    parsed = normalizeParsed(parsed);
     $("#fQuestion").value = parsed.question;
     $("#fOptions").value = parsed.options;
     $("#fAnswer").value = parsed.answer;
