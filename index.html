@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>错题复盘平台</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5"></script>
 <style>
 :root {
   --bg: #f0f4fb;
@@ -308,7 +307,7 @@ footer { text-align: center; color: #9ca3af; font-size: 12px; padding: 20px 0; }
   </div>
 
   <div id="list"></div>
-  <footer>数据来自 Supabase 云端 · 掌握状态多设备同步 · 拍照上传浏览器 OCR 识别</footer>
+  <footer>数据来自 Supabase 云端 · 掌握状态多设备同步 · 拍照上传 AI 识别</footer>
 </div>
 
 <div class="modal-mask" id="uploadModal" style="display:none;">
@@ -323,7 +322,7 @@ footer { text-align: center; color: #9ca3af; font-size: 12px; padding: 20px 0; }
         <button class="btn btn-primary" id="btnPickImage" type="button">拍照 / 选择图片</button>
         <span class="upload-hint">支持相机拍照，AI 自动识别题干与选项</span>
       </div>
-      <div class="upload-hint">AI 识别由智谱 GLM-4V-Flash 提供（免费），失败自动回退本地 OCR</div>
+      <div class="upload-hint">AI 识别由智谱 GLM-4V-Flash 提供（免费）</div>
       <div class="upload-status" id="uploadStatus"></div>
       <div class="form-item">
         <label>题干</label>
@@ -799,15 +798,6 @@ function fillUploadSelects() {
     Object.keys(catSet).map(function (c) { return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; }).join("");
 }
 
-function splitQuestionOptions(lines) {
-  const options = [], questionLines = [];
-  lines.forEach(function (line) {
-    if (/^[A-E]\s*[.、．)）][ \t]*\S/.test(line)) options.push(line);
-    else questionLines.push(line);
-  });
-  return { question: questionLines.join("\n"), options: options.join("\n") };
-}
-
 function compressImage(file) {
   return new Promise(function (resolve, reject) {
     const img = new Image();
@@ -850,7 +840,7 @@ function compressImage(file) {
 }
 
 const ZHIPU_API_KEY = "10958c6070354706a29697a3638dae67.m1QxIgwelW6rN3gP";
-const ZHIPU_PROMPT = '请识别图片中的错题内容，严格输出 JSON（不要输出 markdown 代码块标记），格式如下：{"question":"题干全文","options":"A. 内容\nB. 内容\nC. 内容\nD. 内容","answer":"正确答案字母，无则空","analysis":"解析，无则空","category":"所属板块，从【言语理解与表达、常识判断、判断推理、数量关系、资料分析、政治理论】中判断，无法判断则空"}';
+const ZHIPU_PROMPT = '请识别图片中的错题内容，严格输出 JSON（不要输出 markdown 代码块标记），格式如下：{"question":"题干全文","options":"A. 内容\\nB. 内容\\nC. 内容\\nD. 内容","answer":"正确答案字母，无则空","analysis":"解析，无则空","category":"所属板块，从【言语理解与表达、常识判断、判断推理、数量关系、资料分析、政治理论】中判断，无法判断则空"}。识别规则（务必严格遵守）：1. question 字段只包含题目正文（含问句），严禁混入任何选项内容；2. options 字段每行一个选项，必须以 A./B./C./D. 等字母加点开头，严禁把题干内容当作选项；若某选项跨行则合并到同一行；若图片中题目没有选项（如填空/简答），options 输出空字符串；3. 题干与选项必须严格分离，题干中的文字（包括带字母编号的题干）一律归入 question，只有真正的选项才归入 options。';
 
 function zhipuOCR(dataUrl) {
   return fetch("https://open.bigmodel.cn/api/paas/v4/chat/completions", {
@@ -888,52 +878,6 @@ function zhipuOCR(dataUrl) {
   });
 }
 
-function preprocessImage(file) {
-  return new Promise(function (resolve, reject) {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = function () {
-      try {
-        const MAX = 2000, MIN = 1200;
-        let w = img.naturalWidth, h = img.naturalHeight;
-        const longest = Math.max(w, h);
-        let scale = 1;
-        if (longest > MAX) scale = MAX / longest;
-        else if (longest < MIN) scale = MIN / longest;
-        w = Math.max(1, Math.round(w * scale));
-        h = Math.max(1, Math.round(h * scale));
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, w, h);
-        const imageData = ctx.getImageData(0, 0, w, h);
-        const d = imageData.data;
-        for (let i = 0; i < d.length; i += 4) {
-          const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-          const v = (gray - 128) * 1.3 + 128;
-          const c = v < 0 ? 0 : (v > 255 ? 255 : Math.round(v));
-          d[i] = c; d[i + 1] = c; d[i + 2] = c;
-        }
-        ctx.putImageData(imageData, 0, 0);
-        canvas.toBlob(function (blob) {
-          URL.revokeObjectURL(url);
-          if (blob) resolve(blob);
-          else reject(new Error("图片预处理失败"));
-        }, "image/png");
-      } catch (e) {
-        URL.revokeObjectURL(url);
-        reject(e);
-      }
-    };
-    img.onerror = function () {
-      URL.revokeObjectURL(url);
-      reject(new Error("图片加载失败"));
-    };
-    img.src = url;
-  });
-}
-
 function handleFile(file) {
   if (!file) return;
   $("#uploadStatus").textContent = "正在压缩图片…";
@@ -953,35 +897,7 @@ function handleFile(file) {
     }
     $("#uploadStatus").textContent = "AI 识别完成，请核对";
   }).catch(function (e) {
-    // 智谱失败，回退 Tesseract.js
-    if (!window.Tesseract) {
-      $("#uploadStatus").textContent = "AI 识别失败，已回退本地 OCR（Tesseract.js 未加载，请检查网络后刷新）";
-      return;
-    }
-    $("#uploadStatus").textContent = "AI 识别失败，已回退本地 OCR…";
-    preprocessImage(file).then(function (blob) {
-      $("#uploadStatus").textContent = "正在浏览器 OCR 识别（首次需下载中文语言包，请稍候）…";
-      return Tesseract.recognize(blob, "chi_sim+eng", {
-        psm: 6,
-        logger: function (m) {
-          if (m && m.status === "recognizing text") {
-            $("#uploadStatus").textContent = "识别中 " + Math.round((m.progress || 0) * 100) + "%…";
-          }
-        },
-      });
-    }).then(function (res) {
-      const text = (res && res.data && res.data.text) || "";
-      const lines = text.split("\n")
-        .map(function (s) { return s.trim(); })
-        .filter(Boolean)
-        .map(function (s) { return s.replace(/\s+/g, " "); });
-      const parsed = splitQuestionOptions(lines);
-      $("#fQuestion").value = parsed.question;
-      $("#fOptions").value = parsed.options;
-      $("#uploadStatus").textContent = "识别完成，请核对题干与选项并补充答案/板块/解析";
-    }).catch(function (e2) {
-      $("#uploadStatus").textContent = "识别失败：" + (e2 && e2.message ? e2.message : e2);
-    });
+    $("#uploadStatus").textContent = "AI 识别失败：" + (e && e.message ? e.message : e) + "，请检查网络后重试";
   });
 }
 
