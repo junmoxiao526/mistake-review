@@ -377,6 +377,41 @@ footer { text-align: center; color: #9ca3af; font-size: 12px; padding: 20px 0; }
   </div>
 </div>
 
+<div class="modal-mask" id="editModal" style="display:none;">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3>编辑题目</h3>
+      <button class="modal-close" id="btnEditClose" type="button">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-item">
+        <label>题干</label>
+        <textarea id="fEditQuestion" rows="4" placeholder="题干内容"></textarea>
+      </div>
+      <div class="form-item">
+        <label>选项</label>
+        <textarea id="fEditOptions" rows="5" placeholder="每行一个选项"></textarea>
+      </div>
+      <div class="form-item">
+        <label>答案</label>
+        <input id="fEditAnswer" type="text" placeholder="如 A / B / C / D">
+      </div>
+      <div class="form-item">
+        <label>板块</label>
+        <select id="fEditCategory"><option value="">请选择板块</option></select>
+      </div>
+      <div class="form-item">
+        <label>解析</label>
+        <textarea id="fEditAnalysis" rows="3" placeholder="解析内容（可选）"></textarea>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" id="btnEditCancel" type="button">取消</button>
+      <button class="btn btn-primary" id="btnEditSave" type="button">保存修改</button>
+    </div>
+  </div>
+</div>
+
 <!-- 打印区 -->
 <div id="printArea"></div>
 
@@ -627,6 +662,7 @@ function renderCard(q, idx) {
     '<div class="q-foot">' +
       '<div class="mastery-group">' + masteryBtns + '</div>' +
       '<button class="btn btn-outline show-answer-btn">显示答案</button>' +
+      '<button class="btn btn-outline edit-btn" data-id="' + esc(q.id) + '">编辑</button>' +
       '<button class="btn btn-danger delete-btn" data-id="' + esc(q.id) + '">删除</button>' +
     '</div>' +
     '<div class="answer-panel">' + rows.join("") + '</div>' +
@@ -790,6 +826,10 @@ document.addEventListener("click", function (e) {
         renderStats();
         applyFilters();
       });
+  }
+  const eb = e.target.closest(".edit-btn");
+  if (eb) {
+    openEditModal(eb.dataset.id);
   }
 });
 
@@ -1085,6 +1125,77 @@ $("#categoryQuickList").addEventListener("click", function (e) {
   if (chip) $("#fCategoryEdit").value = chip.dataset.cat;
 });
 $("#categoryModal").addEventListener("click", function (e) { if (e.target === $("#categoryModal")) closeCategoryEdit(); });
+
+// 编辑题目
+let editingQuestionId = null;
+
+function fillEditSelects() {
+  const catSel = $("#fEditCategory");
+  const catSet = {};
+  allQuestions.forEach(function (q) {
+    if (q.category) catSet[q.category] = 1;
+  });
+  catSel.innerHTML = '<option value="">请选择板块</option>' +
+    Object.keys(catSet).map(function (c) { return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; }).join("");
+}
+
+function openEditModal(qid) {
+  const q = allQuestions.find(function (item) { return item.id === qid; });
+  if (!q) return;
+  editingQuestionId = qid;
+  fillEditSelects();
+  $("#fEditQuestion").value = q.question || "";
+  $("#fEditOptions").value = q.options || "";
+  $("#fEditAnswer").value = q.answer || "";
+  $("#fEditAnalysis").value = q.analysis || "";
+  const catSel = $("#fEditCategory");
+  const matched = Array.prototype.some.call(catSel.options, function (o) { return o.value === (q.category || ""); });
+  if (matched) catSel.value = q.category;
+  else catSel.value = "";
+  $("#editModal").style.display = "flex";
+}
+
+function closeEditModal() {
+  $("#editModal").style.display = "none";
+  editingQuestionId = null;
+}
+
+function saveEditQuestion() {
+  const qid = editingQuestionId;
+  if (!qid) return;
+  const question = $("#fEditQuestion").value.trim();
+  if (!question) {
+    alert("题干不能为空");
+    return;
+  }
+  const payload = {
+    question: question,
+    options: $("#fEditOptions").value.trim(),
+    answer: $("#fEditAnswer").value.trim(),
+    category: $("#fEditCategory").value,
+    analysis: $("#fEditAnalysis").value.trim(),
+  };
+  const saveBtn = $("#btnEditSave");
+  saveBtn.disabled = true;
+  supabaseClient.from("questions").update(payload).eq("id", qid).then(function (res) {
+    if (res.error) {
+      alert("保存失败：" + res.error.message);
+    } else {
+      alert("保存成功");
+      closeEditModal();
+      loadData();
+    }
+  }).catch(function (e) {
+    alert("保存请求失败：" + e);
+  }).finally(function () {
+    saveBtn.disabled = false;
+  });
+}
+
+$("#btnEditClose").addEventListener("click", closeEditModal);
+$("#btnEditCancel").addEventListener("click", closeEditModal);
+$("#btnEditSave").addEventListener("click", saveEditQuestion);
+$("#editModal").addEventListener("click", function (e) { if (e.target === $("#editModal")) closeEditModal(); });
 
 </script>
 </body>
