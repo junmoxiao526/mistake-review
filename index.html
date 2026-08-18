@@ -478,6 +478,50 @@ function splitOptions(text) {
   return text.split(/(?=[A-E]\.)/).map(function (s) { return s.trim(); }).filter(Boolean);
 }
 
+function splitTrailingQuestion(s) {
+  const re = /[。；;\n]/g;
+  let m, cut = -1;
+  while ((m = re.exec(s)) !== null) cut = m.index;
+  const tail = cut < 0 ? s.trim() : s.slice(cut + 1).trim();
+  if (tail && /[：:]$/.test(tail)) {
+    const head = cut < 0 ? "" : s.slice(0, cut + 1).trim();
+    return [head, tail];
+  }
+  return [s.trim(), ""];
+}
+
+function joinQuestionLines(parts) {
+  const out = [];
+  parts.forEach(function (s) {
+    if (!s) return;
+    out.push(s.split("\n").map(function (ln) { return esc(ln); }).join("<br>"));
+  });
+  return out.join("<br>");
+}
+
+function formatQuestionText(q) {
+  const t = String(q.question == null ? "" : q.question).replace(/\r/g, "");
+  if (!t) return "";
+  const isSort = /[①②③④⑤⑥⑦⑧⑨⑩]/.test(t) || /排序|语序/.test(t);
+  const isBlank = /[＿_]/.test(t) && /填|横线|最恰当/.test(t);
+  if (isSort) {
+    const parts = t.split(/(?=[①②③④⑤⑥⑦⑧⑨⑩])/).map(function (s) { return s.trim(); }).filter(Boolean);
+    const out = [];
+    for (let i = 0; i < parts.length; i++) {
+      if (i === parts.length - 1) {
+        const sp = splitTrailingQuestion(parts[i]);
+        if (sp[1]) { out.push(sp[0], sp[1]); } else { out.push(sp[0]); }
+      } else {
+        out.push(parts[i]);
+      }
+    }
+    return joinQuestionLines(out);
+  }
+  const sp = splitTrailingQuestion(t);
+  return joinQuestionLines(sp[1] ? [sp[0], sp[1]] : [sp[0]]);
+}
+
+
 function loadMastery() {
   try {
     const raw = localStorage.getItem(MASTERY_KEY);
@@ -694,7 +738,7 @@ function renderCard(q, idx) {
       '<span class="q-no">第 ' + (idx + 1) + ' 题</span>' +
       '<button type="button" class="tag tag-cat tag-cat-edit" data-id="' + esc(q.id) + '" data-category="' + esc(q.category || "未分类") + '" title="点击编辑板块">' + esc(q.category || "未分类") + '</button>' +
     '</div>' +
-    '<div class="q-text">' + esc(q.question) + '</div>' +
+    '<div class="q-text">' + formatQuestionText(q) + '</div>' +
     optsHtml +
     '<div class="q-foot">' +
       '<div class="mastery-group">' + masteryBtns + '</div>' +
