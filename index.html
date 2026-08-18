@@ -152,6 +152,7 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
 .filter-count { margin-left: auto; font-size: 13px; color: var(--muted); }
 
 .question-card {
+  position: relative;
   background: var(--card); border-radius: var(--radius); padding: 20px 22px;
   box-shadow: var(--shadow-md); border: 1px solid var(--border-soft); margin-bottom: 14px;
   transition: transform .2s ease, box-shadow .2s ease;
@@ -188,6 +189,28 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
 .q-option.selected { background: #eef2ff; }
 .q-option.correct { background: #e8f7ef; color: var(--green); font-weight: 600; }
 .q-option.wrong { background: #fdecec; color: var(--red); font-weight: 600; }
+/* 手写圈画层 */
+.q-draw { position: absolute; inset: 0; z-index: 10; pointer-events: none; border-radius: var(--radius); overflow: hidden; }
+.q-draw-img { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; object-fit: fill; }
+.q-draw-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: none; pointer-events: none; cursor: crosshair; touch-action: none; }
+.q-draw-canvas.active { display: block; pointer-events: auto; }
+.q-draw-toolbar {
+  position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 12;
+  display: none; align-items: center; gap: 6px; flex-wrap: nowrap;
+  background: rgba(255,255,255,.96); border: 1px solid var(--border);
+  border-radius: 20px; padding: 5px 9px; box-shadow: 0 4px 14px rgba(15,23,42,.16);
+  pointer-events: auto; white-space: nowrap;
+}
+.q-draw-toolbar.open { display: flex; }
+.q-draw-tbtn {
+  border: 1px solid var(--border); background: #fff; color: var(--text);
+  border-radius: 16px; padding: 3px 11px; font-size: 12px; cursor: pointer;
+  font-family: inherit; transition: all .15s;
+}
+.q-draw-tbtn:hover { border-color: var(--primary); color: var(--primary); }
+.q-draw-tbtn.active { background: var(--primary-soft); border-color: #4f46e5; color: #4f46e5; font-weight: 600; }
+.q-draw-tbtn.danger { color: var(--red); border-color: #f3c2c5; }
+.q-draw-tbtn.danger:hover { border-color: var(--red); color: var(--red); }
 .q-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
 .mastery-group { display: flex; gap: 6px; }
 .mastery-btn {
@@ -660,6 +683,12 @@ function renderCard(q, idx) {
     return '<button class="mastery-btn ' + cls + ' ' + active + '" data-id="' + esc(q.id) + '" data-mastery="' + m + '">' + m + '</button>';
   }).join("");
 
+  let savedDraw = null;
+  try { savedDraw = localStorage.getItem("qdraw_" + q.id) || null; } catch (err) { savedDraw = null; }
+  const drawImgHtml = savedDraw
+    ? '<img class="q-draw-img" src="' + savedDraw + '" alt="">'
+    : '<img class="q-draw-img" alt="" style="display:none;">';
+
   return '<div class="question-card" data-id="' + esc(q.id) + '">' +
     '<div class="q-head">' +
       '<span class="q-no">第 ' + (idx + 1) + ' 题</span>' +
@@ -670,10 +699,23 @@ function renderCard(q, idx) {
     '<div class="q-foot">' +
       '<div class="mastery-group">' + masteryBtns + '</div>' +
       '<button class="btn btn-outline show-answer-btn">显示答案</button>' +
+      '<button class="btn btn-outline draw-btn" data-id="' + esc(q.id) + '">圈画</button>' +
       '<button class="btn btn-outline edit-btn" data-id="' + esc(q.id) + '">编辑</button>' +
       '<button class="btn btn-danger delete-btn" data-id="' + esc(q.id) + '">删除</button>' +
     '</div>' +
     '<div class="answer-panel">' + rows.join("") + '</div>' +
+    '<div class="q-draw">' + drawImgHtml +
+      '<canvas class="q-draw-canvas"></canvas>' +
+      '<div class="q-draw-toolbar">' +
+        '<button type="button" class="q-draw-tbtn active" data-action="color-red" title="红色画笔">红</button>' +
+        '<button type="button" class="q-draw-tbtn" data-action="color-black" title="黑色画笔">黑</button>' +
+        '<button type="button" class="q-draw-tbtn" data-action="size-thin" title="细笔">细</button>' +
+        '<button type="button" class="q-draw-tbtn active" data-action="size-bold" title="粗笔">粗</button>' +
+        '<button type="button" class="q-draw-tbtn" data-action="eraser" title="橡皮擦">橡皮</button>' +
+        '<button type="button" class="q-draw-tbtn danger" data-action="clear" title="清空">清空</button>' +
+        '<button type="button" class="q-draw-tbtn" data-action="done" title="完成">完成</button>' +
+      '</div>' +
+    '</div>' +
   '</div>';
 }
 
@@ -908,10 +950,124 @@ document.addEventListener("click", function (e) {
   const eb = e.target.closest(".edit-btn");
   if (eb) {
     openEditModal(eb.dataset.id);
+    return;
+  }
+  const dwb = e.target.closest(".draw-btn");
+  if (dwb) {
+    openDrawMode(dwb);
+    return;
+  }
+  const tbtn = e.target.closest(".q-draw-toolbar [data-action]");
+  if (tbtn && drawSession) {
+    const action = tbtn.dataset.action;
+    if (action === "color-red") drawSession.color = "#ef4444";
+    else if (action === "color-black") drawSession.color = "#000000";
+    else if (action === "size-thin") drawSession.size = 2;
+    else if (action === "size-bold") drawSession.size = 4;
+    else if (action === "eraser") drawSession.erasing = !drawSession.erasing;
+    else if (action === "clear") drawSession.ctx.clearRect(0, 0, drawSession.canvas.width, drawSession.canvas.height);
+    else if (action === "done") finishDrawSession();
+    if (drawSession) setDrawToolbarState();
   }
 });
 
 init();
+
+// 手写圈画：状态与事件
+let drawSession = null;
+
+function openDrawMode(btn) {
+  finishDrawSession();
+  const card = btn.closest(".question-card");
+  if (!card) return;
+  const img = card.querySelector(".q-draw-img");
+  const canvas = card.querySelector(".q-draw-canvas");
+  const toolbar = card.querySelector(".q-draw-toolbar");
+  const w = card.clientWidth, h = card.clientHeight;
+  if (!w || !h) return;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  let saved = null;
+  try { saved = localStorage.getItem("qdraw_" + btn.dataset.id) || null; } catch (err) { saved = null; }
+  if (saved) {
+    const im = new Image();
+    im.onload = function () { ctx.drawImage(im, 0, 0, w, h); };
+    im.src = saved;
+  }
+  drawSession = {
+    id: btn.dataset.id, card: card, img: img, canvas: canvas, toolbar: toolbar, ctx: ctx,
+    color: "#ef4444", size: 4, erasing: false, drawing: false
+  };
+  img.style.display = "none";
+  canvas.classList.add("active");
+  toolbar.classList.add("open");
+  setDrawToolbarState();
+}
+
+function setDrawToolbarState() {
+  if (!drawSession) return;
+  const tb = drawSession.toolbar;
+  tb.querySelector('[data-action="color-red"]').classList.toggle("active", drawSession.color === "#ef4444");
+  tb.querySelector('[data-action="color-black"]').classList.toggle("active", drawSession.color === "#000000");
+  tb.querySelector('[data-action="size-thin"]').classList.toggle("active", drawSession.size === 2);
+  tb.querySelector('[data-action="size-bold"]').classList.toggle("active", drawSession.size === 4);
+  tb.querySelector('[data-action="eraser"]').classList.toggle("active", drawSession.erasing);
+}
+
+function finishDrawSession() {
+  if (!drawSession) return;
+  const s = drawSession;
+  try {
+    const dataUrl = s.canvas.toDataURL("image/png");
+    localStorage.setItem("qdraw_" + s.id, dataUrl);
+    s.img.src = dataUrl;
+    s.img.style.display = "";
+  } catch (err) {
+    console.warn("保存圈画失败", err);
+  }
+  s.canvas.classList.remove("active");
+  s.toolbar.classList.remove("open");
+  drawSession = null;
+}
+
+document.addEventListener("pointerdown", function (e) {
+  const cv = e.target.closest(".q-draw-canvas");
+  if (!cv || !drawSession || cv !== drawSession.canvas) return;
+  e.preventDefault();
+  const rect = cv.getBoundingClientRect();
+  drawSession.drawing = true;
+  drawSession.lastX = e.clientX - rect.left;
+  drawSession.lastY = e.clientY - rect.top;
+  drawSession.ctx.beginPath();
+  drawSession.ctx.moveTo(drawSession.lastX, drawSession.lastY);
+  try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+});
+
+document.addEventListener("pointermove", function (e) {
+  if (!drawSession || !drawSession.drawing) return;
+  e.preventDefault();
+  const cv = drawSession.canvas;
+  const rect = cv.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const ctx = drawSession.ctx;
+  ctx.globalCompositeOperation = drawSession.erasing ? "destination-out" : "source-over";
+  ctx.strokeStyle = drawSession.color;
+  ctx.lineWidth = drawSession.size;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.lineTo(x, y);
+  ctx.stroke();
+  drawSession.lastX = x;
+  drawSession.lastY = y;
+});
+
+document.addEventListener("pointerup", function () {
+  if (drawSession) drawSession.drawing = false;
+});
+document.addEventListener("pointercancel", function () {
+  if (drawSession) drawSession.drawing = false;
+});
 // 拍照上传错题
 const uploadModal = $("#uploadModal");
 const fileInput = $("#fileInput");
