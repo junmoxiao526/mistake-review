@@ -962,7 +962,7 @@ function buildPrintHtml(qs) {
   parts.push('<div class="print-subtitle">共 ' + qs.length + ' 道错题 | ' + scopeLabel() + ' | ' + date + '</div>');
   qs.forEach(function (q, i) {
     let html = '<div class="pq">';
-    html += '<div class="pq-text">' + (i + 1) + '. ' + esc(q.question) + '</div>';
+    html += '<div class="pq-text">' + (i + 1) + '. ' + formatQuestionText(q) + '</div>';
     splitOptions(q.options).forEach(function (o) {
       html += '<div class="pq-opt">' + esc(o) + '</div>';
     });
