@@ -312,6 +312,7 @@ footer { text-align: center; color: #9ca3af; font-size: 12px; padding: 20px 0; }
 
   <div class="charts">
     <div class="chart-card full"><h3>板块错题数</h3><div id="chartCategory"></div></div>
+    <div class="chart-card full"><h3>题型分布</h3><div id="chartType"></div></div>
   </div>
 
   <div class="filter-bar">
@@ -322,6 +323,10 @@ footer { text-align: center; color: #9ca3af; font-size: 12px; padding: 20px 0; }
     <div class="filter-item">
       <label>板块</label>
       <select id="fCategory"><option value="">全部板块</option></select>
+    </div>
+    <div class="filter-item">
+      <label>题型</label>
+      <select id="fType"><option value="">全部题型</option></select>
     </div>
     <div class="filter-item">
       <label>掌握状态</label>
@@ -457,7 +462,7 @@ let allQuestions = [];
 let serverStats = null;
 const state = {
   questions: [],
-  filters: { category: "", mastery: "", keyword: "" },
+  filters: { category: "", mastery: "", keyword: "", type: "" },
 };
 
 function genId() {
@@ -545,17 +550,19 @@ function getMastery(id) {
 }
 
 function calcStats(questions) {
-  const categories = {}, reasons = {}, mastery = { "未掌握": 0, "已掌握": 0, "需复习": 0 };
+  const categories = {}, types = {}, reasons = {}, mastery = { "未掌握": 0, "已掌握": 0, "需复习": 0 };
   questions.forEach(function (q) {
     const c = q.category || "未分类";
+    const t = q.type || "未分类";
     const r = q.error_reason || "未填写";
     categories[c] = (categories[c] || 0) + 1;
+    types[t] = (types[t] || 0) + 1;
     reasons[r] = (reasons[r] || 0) + 1;
     const m = getMastery(q.id);
     if (Object.prototype.hasOwnProperty.call(mastery, m)) mastery[m] += 1;
     else mastery[DEFAULT_MASTERY] += 1;
   });
-  return { total: questions.length, categories: categories, reasons: reasons, mastery: mastery };
+  return { total: questions.length, categories: categories, types: types, reasons: reasons, mastery: mastery };
 }
 
 function shade(hex, amt) {
@@ -649,6 +656,14 @@ function renderStats() {
     const el = e.target.closest("[data-category]");
     if (el) filterByCategory(el.dataset.category);
   };
+  const typeEl = $("#chartType");
+  if (typeEl) {
+    typeEl.innerHTML = renderTypeStats(s.types);
+    typeEl.onclick = function (e) {
+      const el = e.target.closest("[data-type]");
+      if (el) filterByType(el.dataset.type);
+    };
+  }
 }
 
 function filterByCategory(cat) {
@@ -665,6 +680,42 @@ function filterByCategory(cat) {
   if (list) list.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+function renderTypeStats(types) {
+  const entries = Object.keys(types || {}).map(function (k) { return [k, types[k]]; });
+  const total = entries.reduce(function (a, e) { return a + e[1]; }, 0);
+  const order = ["片段阅读", "逻辑填空", "语句排序"];
+  entries.sort(function (a, b) {
+    const ia = order.indexOf(a[0]);
+    const ib = order.indexOf(b[0]);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+  const colors = ["#6366f1", "#0ea5e9", "#f59e0b", "#10b981", "#f43f5e"];
+  const items = entries.map(function (e, i) {
+    const pct = total > 0 ? ((e[1] / total) * 100).toFixed(1) : "0.0";
+    const activeCls = state.filters.type === e[0] ? " active" : "";
+    return '<div class="pie-legend-item' + activeCls + '" data-type="' + esc(e[0]) + '">' +
+      '<span class="pie-legend-dot" style="background:' + colors[i % colors.length] + '"></span>' +
+      '<span class="pie-legend-name" title="' + esc(e[0]) + '">' + esc(e[0]) + '</span>' +
+      '<span class="pie-legend-val">' + e[1] + ' 题 · ' + pct + '%</span>' +
+      '</div>';
+  }).join("");
+  return '<div class="pie-legend">' + items + '</div>';
+}
+
+function filterByType(type) {
+  if (state.filters.type === type) {
+    state.filters.type = "";
+  } else {
+    state.filters.type = type;
+  }
+  const typeSel = $("#fType");
+  if (typeSel) typeSel.value = state.filters.type;
+  renderStats();
+  applyFilters();
+  const list = $("#list");
+  if (list) list.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function populateFilters() {
   const catSel = $("#fCategory");
   const curCat = catSel.value;
@@ -675,6 +726,19 @@ function populateFilters() {
   catSel.innerHTML = '<option value="">全部板块</option>' +
     Object.keys(catSet).map(function (c) { return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; }).join("");
   catSel.value = curCat;
+
+  const typeSel = $("#fType");
+  if (!typeSel) return;
+  const curType = typeSel.value;
+  const typeSet = {};
+  allQuestions.forEach(function (q) { if (q.type) typeSet[q.type] = 1; });
+  const fixedTypes = ["片段阅读", "逻辑填空", "语句排序"];
+  fixedTypes.forEach(function (t) { typeSet[t] = 1; });
+  const typeOrder = fixedTypes.filter(function (t) { return typeSet[t]; })
+    .concat(Object.keys(typeSet).filter(function (t) { return fixedTypes.indexOf(t) < 0; }));
+  typeSel.innerHTML = '<option value="">全部题型</option>' +
+    typeOrder.map(function (t) { return '<option value="' + esc(t) + '">' + esc(t) + '</option>'; }).join("");
+  typeSel.value = curType;
 }
 
 function matchesKeyword(q, kw) {
@@ -690,6 +754,7 @@ function applyFilters() {
   const kw = f.keyword;
   state.questions = allQuestions.filter(function (q) {
     if (f.category && (q.category || "未分类") !== f.category) return false;
+    if (f.type && (q.type || "") !== f.type) return false;
     if (f.mastery && q.mastery !== f.mastery) return false;
     if (kw && !matchesKeyword(q, kw)) return false;
     return true;
@@ -853,7 +918,7 @@ function checkOptionAnswer(optEl) {
 function scopeLabel() {
   const f = state.filters;
   const kw = f.keyword ? ("关键字:" + f.keyword) : "";
-  const parts = [f.category, f.mastery, kw].filter(Boolean);
+  const parts = [f.category, f.type, f.mastery, kw].filter(Boolean);
   return parts.join(" / ") || "全部";
 }
 
@@ -880,6 +945,7 @@ function exportPrint() {
     // 本地环境：调用后端 /api/export 生成 PDF
     const payload = {
       category: state.filters.category,
+      type: state.filters.type,
       mastery: state.filters.mastery,
     };
     fetch("/api/export", {
@@ -949,6 +1015,7 @@ $("#btnRefresh").addEventListener("click", loadData);
 $("#btnExport").addEventListener("click", exportPrint);
 $("#fKeyword").addEventListener("input", function (e) { state.filters.keyword = e.target.value.trim(); applyFilters(); });
 $("#fCategory").addEventListener("change", function (e) { state.filters.category = e.target.value; applyFilters(); });
+$("#fType").addEventListener("change", function (e) { state.filters.type = e.target.value; applyFilters(); });
 $("#fMastery").addEventListener("change", function (e) { state.filters.mastery = e.target.value; applyFilters(); });
 
 document.addEventListener("click", function (e) {
