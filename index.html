@@ -184,6 +184,10 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
   border-radius: 6px;
 }
 .q-option:hover { background: #f9fafb; }
+.q-option { cursor: pointer; user-select: none; transition: background .15s ease, color .15s ease; }
+.q-option.selected { background: #eef2ff; }
+.q-option.correct { background: #e8f7ef; color: var(--green); font-weight: 600; }
+.q-option.wrong { background: #fdecec; color: var(--red); font-weight: 600; }
 .q-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
 .mastery-group { display: flex; gap: 6px; }
 .mastery-btn {
@@ -636,7 +640,11 @@ function renderCard(q, idx) {
   const mClass = masteryClass(q.mastery);
   const opts = splitOptions(q.options);
   const optsHtml = opts.length
-    ? '<div class="q-options">' + opts.map(function (o) { return '<div class="q-option">' + esc(o) + '</div>'; }).join("") + '</div>'
+    ? '<div class="q-options">' + opts.map(function (o) {
+        const letterMatch = o.match(/^([A-Ea-e])\s*[.、．)）]/);
+        const letter = letterMatch ? letterMatch[1].toUpperCase() : "";
+        return '<div class="q-option" data-id="' + esc(q.id) + '" data-opt="' + letter + '">' + esc(o) + '</div>';
+      }).join("") + '</div>'
     : "";
   const answer = (q.answer || "").trim();
   const reason = (q.error_reason || "").trim();
@@ -689,6 +697,71 @@ function setMastery(id, mastery) {
     .then(function (res) {
       if (res.error) alert("掌握状态保存失败：" + res.error.message);
     });
+}
+
+function extractAnswerLetters(answer) {
+  if (!answer) return [];
+  const m = String(answer).match(/[A-Ea-e]/g);
+  if (!m) return [];
+  const seen = {}, letters = [];
+  m.forEach(function (ch) {
+    const up = ch.toUpperCase();
+    if (!seen[up]) { seen[up] = 1; letters.push(up); }
+  });
+  return letters;
+}
+
+function checkOptionAnswer(optEl) {
+  const id = optEl.dataset.id;
+  const optLetter = (optEl.dataset.opt || "").toUpperCase();
+  const card = optEl.closest(".question-card");
+  const q = allQuestions.find(function (item) { return item.id === id; });
+  if (!q || !card) return;
+
+  // 再次点击已作答的选项：取消本次作答高亮
+  if (optEl.classList.contains("selected") || optEl.classList.contains("correct") || optEl.classList.contains("wrong")) {
+    card.querySelectorAll(".q-option").forEach(function (el) {
+      el.classList.remove("selected", "correct", "wrong");
+    });
+    return;
+  }
+
+  const correctLetters = extractAnswerLetters(q.answer);
+  if (correctLetters.length === 0) {
+    alert("该题未设置答案，请先编辑填写");
+    return;
+  }
+
+  // 重新选择：清除本卡片的旧作答状态
+  card.querySelectorAll(".q-option").forEach(function (el) {
+    el.classList.remove("selected", "correct", "wrong");
+  });
+  optEl.classList.add("selected");
+
+  if (correctLetters.indexOf(optLetter) >= 0) {
+    optEl.classList.add("correct");
+  } else {
+    optEl.classList.add("wrong");
+    card.querySelectorAll(".q-option").forEach(function (el) {
+      const l = (el.dataset.opt || "").toUpperCase();
+      if (correctLetters.indexOf(l) >= 0) el.classList.add("correct");
+    });
+    // 做错：掌握状态归为未掌握
+    const cur = q.mastery || "未掌握";
+    if (cur !== "未掌握") {
+      masteryMap[id] = "未掌握";
+      q.mastery = "未掌握";
+      serverStats = null;
+      renderStats();
+      card.querySelectorAll(".mastery-btn").forEach(function (btn) {
+        btn.classList.toggle("active", btn.dataset.mastery === "未掌握");
+      });
+      supabaseClient.from("mastery").upsert({ id: id, mastery: "未掌握", updated_at: new Date().toISOString() })
+        .then(function (res) {
+          if (res.error) alert("掌握状态保存失败：" + res.error.message);
+        });
+    }
+  }
 }
 
 function scopeLabel() {
@@ -826,6 +899,11 @@ document.addEventListener("click", function (e) {
         renderStats();
         applyFilters();
       });
+  }
+  const ob = e.target.closest(".q-option");
+  if (ob) {
+    checkOptionAnswer(ob);
+    return;
   }
   const eb = e.target.closest(".edit-btn");
   if (eb) {
