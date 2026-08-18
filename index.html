@@ -222,6 +222,7 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
 .mastery-btn.weak.active { background: #fdecec; border-color: var(--red); color: var(--red); font-weight: 600; box-shadow: 0 2px 8px rgba(229,72,77,.18); }
 .mastery-btn.ok.active { background: #e8f7ef; border-color: var(--green); color: var(--green); font-weight: 600; box-shadow: 0 2px 8px rgba(24,160,88,.18); }
 .mastery-btn.review.active { background: #fdf3e0; border-color: var(--amber); color: var(--amber); font-weight: 600; box-shadow: 0 2px 8px rgba(217,138,0,.18); }
+.mastery-btn.unsure.active { background: #eef2ff; border-color: var(--primary); color: var(--primary); font-weight: 600; box-shadow: 0 2px 8px rgba(59,110,245,.18); }
 .show-answer-btn { margin-left: auto; }
 .question-card.capturing .q-head,
 .question-card.capturing .q-foot,
@@ -876,11 +877,7 @@ function renderCard(q, idx) {
   if (reason) rows.push('<div class="row"><span class="k">错误原因：</span><span class="reason">' + esc(reason) + '</span></div>');
   if (analysis) rows.push('<div class="row"><span class="k">解析：</span><span class="analysis">' + esc(analysis) + '</span></div>');
 
-  const masteryBtns = MASTERY_OPTIONS.map(function (m) {
-    const cls = masteryClass(m);
-    const active = q.mastery === m ? "active" : "";
-    return '<button class="mastery-btn ' + cls + ' ' + active + '" data-id="' + esc(q.id) + '" data-mastery="' + m + '">' + m + '</button>';
-  }).join("");
+  const masteryBtns = '<button class="mastery-btn unsure' + (q.mastery === "未掌握" ? " active" : "") + '" data-id="' + esc(q.id) + '" data-mastery="不确定">不确定</button>';
 
   let savedDraw = null;
   try { savedDraw = localStorage.getItem("qdraw_" + q.id) || null; } catch (err) { savedDraw = null; }
@@ -941,6 +938,27 @@ function setMastery(id, mastery) {
     });
 }
 
+function setAnswerMastery(id, mastery, refreshList) {
+  masteryMap[id] = mastery;
+  allQuestions.forEach(function (q) { if (q.id === id) q.mastery = mastery; });
+  serverStats = null;
+  renderStats();
+  if (refreshList) {
+    applyFilters();
+  } else {
+    const card = document.querySelector('.question-card[data-id="' + id + '"]');
+    if (card) {
+      card.querySelectorAll(".mastery-btn").forEach(function (btn) {
+        btn.classList.toggle("active", mastery === "未掌握");
+      });
+    }
+  }
+  supabaseClient.from("mastery").upsert({ id: id, mastery: mastery, updated_at: new Date().toISOString() })
+    .then(function (res) {
+      if (res.error) alert("掌握状态保存失败：" + res.error.message);
+    });
+}
+
 function extractAnswerLetters(answer) {
   if (!answer) return [];
   const m = String(answer).match(/[A-Ea-e]/g);
@@ -982,26 +1000,22 @@ function checkOptionAnswer(optEl) {
 
   if (correctLetters.indexOf(optLetter) >= 0) {
     optEl.classList.add("correct");
+    // 选对：掌握状态归为已掌握
+    const curM = q.mastery || "未掌握";
+    if (curM !== "已掌握") {
+      setAnswerMastery(id, "已掌握", !!state.filters.mastery);
+    }
   } else {
     optEl.classList.add("wrong");
     card.querySelectorAll(".q-option").forEach(function (el) {
       const l = (el.dataset.opt || "").toUpperCase();
       if (correctLetters.indexOf(l) >= 0) el.classList.add("correct");
     });
-    // 做错：掌握状态归为未掌握
-    const cur = q.mastery || "未掌握";
-    if (cur !== "未掌握") {
-      masteryMap[id] = "未掌握";
-      q.mastery = "未掌握";
-      serverStats = null;
-      renderStats();
-      card.querySelectorAll(".mastery-btn").forEach(function (btn) {
-        btn.classList.toggle("active", btn.dataset.mastery === "未掌握");
-      });
-      supabaseClient.from("mastery").upsert({ id: id, mastery: "未掌握", updated_at: new Date().toISOString() })
-        .then(function (res) {
-          if (res.error) alert("掌握状态保存失败：" + res.error.message);
-        });
+    // 选错：当前筛选为"未掌握"时归入需复习，否则归入未掌握
+    const curM2 = q.mastery || "未掌握";
+    const targetM = state.filters.mastery === "未掌握" ? "需复习" : "未掌握";
+    if (curM2 !== targetM) {
+      setAnswerMastery(id, targetM, !!state.filters.mastery);
     }
   }
 }
@@ -1117,7 +1131,9 @@ document.addEventListener("click", function (e) {
   }
   const mb = e.target.closest(".mastery-btn");
   if (mb) {
-    setMastery(mb.dataset.id, mb.dataset.mastery);
+    const id = mb.dataset.id;
+    const targetM = state.filters.mastery === "未掌握" ? "需复习" : "未掌握";
+    setAnswerMastery(id, targetM, !!state.filters.mastery);
     return;
   }
   const sb = e.target.closest(".show-answer-btn");
