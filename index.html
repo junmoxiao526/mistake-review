@@ -296,6 +296,14 @@ footer { text-align: center; color: #9ca3af; font-size: 12px; padding: 20px 0; }
 .ai-input-row { display: flex; gap: 10px; margin-top: 4px; }
 .ai-input-row input { flex: 1; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; font-size: 14px; font-family: inherit; outline: none; }
 .ai-input-row input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59,110,245,.12); }
+.ai-thumb-wrap { display: none; align-items: center; gap: 8px; margin: 8px 0 2px; padding: 6px 8px; background: #f8fafc; border: 1px dashed var(--border); border-radius: 10px; }
+.ai-thumb-wrap.show { display: flex; }
+.ai-thumb-box { position: relative; width: 64px; height: 64px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border-soft); flex-shrink: 0; }
+.ai-thumb-box img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ai-thumb-x { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; line-height: 16px; text-align: center; background: rgba(0,0,0,.55); color: #fff; border: none; border-radius: 50%; font-size: 12px; cursor: pointer; padding: 0; }
+.ai-thumb-tip { font-size: 12px; color: var(--muted); }
+.btn-ai-pick { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 14px; border: 1px solid var(--border); border-radius: 10px; background: #fff; color: var(--text); font-size: 14px; cursor: pointer; white-space: nowrap; }
+.btn-ai-pick:hover { border-color: var(--primary); color: var(--primary); }
 .ai-status { font-size: 12px; color: var(--muted); margin-top: 8px; min-height: 16px; }
 .form-item { margin-bottom: 14px; }
 .form-item label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
@@ -480,8 +488,17 @@ footer { text-align: center; color: #9ca3af; font-size: 12px; padding: 20px 0; }
     <div class="modal-body">
       <div class="ai-chat">
         <div class="ai-msgs" id="aiMsgs"></div>
+        <div class="ai-thumb-wrap" id="aiThumbWrap">
+          <div class="ai-thumb-box">
+            <img id="aiThumbImg" alt="题目截图">
+            <button class="ai-thumb-x" id="btnAIThumbX" type="button" title="移除图片">&times;</button>
+          </div>
+          <span class="ai-thumb-tip" id="aiThumbTip">已选 1 张截图，可继续输入问题</span>
+        </div>
         <div class="ai-input-row">
           <input id="aiInput" type="text" placeholder="输入问题，如：解释"事半功倍"的意思">
+          <button class="btn-ai-pick" id="btnAIPick" type="button" title="上传题目截图">🖼 图片</button>
+          <input type="file" id="aiFileInput" accept="image/*" style="display:none;">
           <button class="btn btn-primary" id="btnAISend" type="button">发送</button>
         </div>
         <div class="ai-status" id="aiStatus">AI 由智谱 GLM-4-Flash 提供（免费）</div>
@@ -1371,8 +1388,105 @@ const ZHIPU_API_KEY = "10958c6070354706a29697a3638dae67.m1QxIgwelW6rN3gP";
 const ZHIPU_PROMPT = '请识别图片中的错题内容，严格输出 JSON（不要输出 markdown 代码块标记），格式如下：{"question":"题干全文","options":"A. 内容\\nB. 内容\\nC. 内容\\nD. 内容","answer":"正确答案字母，无则空","analysis":"解析，无则空","category":"所属板块，从【言语理解与表达、常识判断、判断推理、数量关系、资料分析、政治理论】中判断，无法判断则空"}。识别规则（务必严格遵守）：1. question 字段只包含题目正文（含问句），严禁混入任何选项内容；2. options 字段每行一个选项，必须以 A./B./C./D. 等字母加点开头，严禁把题干内容当作选项；若某选项跨行则合并到同一行；若图片中题目没有选项（如填空/简答），options 输出空字符串；3. 题干与选项必须严格分离，题干中的文字（包括带字母编号的题干）一律归入 question，只有真正的选项才归入 options；4. 特殊题型处理：语句排序题中，题干为 ① ② ③ 等圆圈数字编号的多句话，全部编号句子及排序要求（如"对上述语句排序，最连贯的一项是"）归入 question，选项为 A./B./C./D. 加数字排列序列（如 A. ④②③①⑦⑤⑥），每行一个选项归入 options；若题干中某行以 A./B./C./D. 等字母加点开头且其后为简短内容，则该行属于选项而非题干；若图片中题干与选项之间有明显分隔（横线/空行），以分隔为界严格划分；5. 考公常见题型识别规则：逻辑填空，题干含空格（____ 或 （ ）），选项为词语，每行一个选项；片段阅读/篇章阅读，题干为一段文字加问题，选项为 A./B./C./D. 文字；语句表达（排序/衔接/病句），排序题按第4条处理，语句衔接题题干为带空段的文字、选项为句子；定义判断，题干为定义描述，选项为 A./B./C./D. 案例描述；类比推理，题干为"XX：XX"或"XX 对于 XX 相当于 XX 对于 XX"，选项为 A./B./C./D. 词语对；图形推理，题干为图形（AI 无法识别图形细节），question 输出题号与题目要求文字（如"从所给的四个选项中，选择最合适的一个填入问号处"），options 输出 A./B./C./D. 字母占位；数量关系/数字推理，题干为数学题文字，选项为数字，每行一个；资料分析，题干包含材料（文字/表格/图表）与若干小题，材料与问题归入 question，各小题选项归入 options；常识判断/政治理论，题干为陈述加问题，选项为 A./B./C./D. 文字。';
 
 const AI_SYSTEM_PROMPT = "你是备考公考助手，擅长解释成语、词语含义并举例，回答简洁准确";
+const AI_IMAGE_SYSTEM_PROMPT = "你是备考公考助教，能看图解题。请结合用户上传的题目截图与问题，判断题型、分析选项、给出答案与解析，回答简洁准确";
 let aiHistory = [];
 let aiBusy = false;
+let aiPendingImage = null;
+
+function compressAIImage(file, maxBytes) {
+  maxBytes = maxBytes || 2 * 1024 * 1024;
+  return new Promise(function (resolve, reject) {
+    const fr = new FileReader();
+    fr.onerror = function () { reject(new Error("图片读取失败")); };
+    fr.onload = function () {
+      const raw = fr.result;
+      if (raw.length <= maxBytes) return resolve(raw);
+      const img = new Image();
+      img.onerror = function () { reject(new Error("图片解析失败")); };
+      img.onload = function () {
+        const MAX_EDGE = 1280;
+        let w = img.width, h = img.height;
+        if (Math.max(w, h) > MAX_EDGE) {
+          const ratio = MAX_EDGE / Math.max(w, h);
+          w = Math.round(w * ratio);
+          h = Math.round(h * ratio);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        let quality = 0.85;
+        let out = canvas.toDataURL("image/jpeg", quality);
+        while (out.length > maxBytes && quality > 0.4) {
+          quality -= 0.15;
+          out = canvas.toDataURL("image/jpeg", quality);
+        }
+        resolve(out);
+      };
+      img.src = raw;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
+function pickAIImage() {
+  const fi = $("#aiFileInput");
+  fi.value = "";
+  fi.click();
+}
+
+function showAIThumb(dataUrl) {
+  $("#aiThumbImg").src = dataUrl;
+  $("#aiThumbWrap").classList.add("show");
+}
+
+function clearAIThumb() {
+  aiPendingImage = null;
+  $("#aiThumbImg").removeAttribute("src");
+  $("#aiThumbWrap").classList.remove("show");
+  $("#aiFileInput").value = "";
+}
+
+function handleAIFileChange(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  $("#aiStatus").textContent = "图片处理中…";
+  compressAIImage(file).then(function (dataUrl) {
+    aiPendingImage = dataUrl;
+    showAIThumb(dataUrl);
+    $("#aiStatus").textContent = "已选择题目截图，输入问题后发送（支持图片+问题分析）";
+  }).catch(function (err) {
+    $("#aiStatus").textContent = "图片处理失败：" + (err && err.message ? err.message : err);
+  });
+}
+
+function analyzeImageChat(question, imageDataUrl) {
+  const imageUserMsg = {
+    role: "user",
+    content: [
+      { type: "text", text: question },
+      { type: "image_url", image_url: { url: imageDataUrl } },
+    ],
+  };
+  const messages = [{ role: "system", content: AI_IMAGE_SYSTEM_PROMPT }]
+    .concat(aiHistory)
+    .concat([imageUserMsg]);
+  return fetch("https://open.bigmodel.cn/api/paas/v4/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": "Bearer " + ZHIPU_API_KEY,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ model: "glm-4v-flash", messages: messages, temperature: 0.7 }),
+  }).then(function (r) {
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  }).then(function (data) {
+    const content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+    if (!content) throw new Error("无返回内容");
+    return String(content).trim();
+  });
+}
 
 function zhipuChat(question) {
   const messages = [{ role: "system", content: AI_SYSTEM_PROMPT }]
@@ -1415,16 +1529,29 @@ function appendAIMsg(role, text) {
 function sendAI() {
   const input = $("#aiInput");
   const q = input.value.trim();
+  const hasImage = !!aiPendingImage;
   if (aiBusy) return;
-  if (!q) { $("#aiStatus").textContent = "请输入问题后再发送"; return; }
+  if (!q && !hasImage) { $("#aiStatus").textContent = "请输入问题后再发送"; return; }
+  const question = q || "请分析这张题目截图，给出答案和解析";
   aiBusy = true;
-  appendAIMsg("user", q);
+  appendAIMsg("user", hasImage ? "[题目截图] " + question : q);
   input.value = "";
   $("#aiStatus").textContent = "思考中…";
   $("#btnAISend").disabled = true;
-  zhipuChat(q).then(function (answer) {
+  const request = hasImage
+    ? analyzeImageChat(question, aiPendingImage)
+    : zhipuChat(question);
+  request.then(function (answer) {
     appendAIMsg("assistant", answer);
-    aiHistory.push({ role: "user", content: q }, { role: "assistant", content: answer });
+    if (hasImage) {
+      aiHistory.push(
+        { role: "user", content: [{ type: "text", text: question }, { type: "image_url", image_url: { url: aiPendingImage } }] },
+        { role: "assistant", content: answer }
+      );
+      clearAIThumb();
+    } else {
+      aiHistory.push({ role: "user", content: q }, { role: "assistant", content: answer });
+    }
     if (aiHistory.length > 20) aiHistory = aiHistory.slice(aiHistory.length - 20);
     $("#aiStatus").textContent = "AI 由智谱 GLM-4-Flash 提供（免费）";
   }).catch(function (e) {
@@ -1603,6 +1730,9 @@ $("#btnAIClose").addEventListener("click", closeAI);
 $("#aiModal").addEventListener("click", function (e) { if (e.target === $("#aiModal")) closeAI(); });
 $("#btnAISend").addEventListener("click", sendAI);
 $("#aiInput").addEventListener("keydown", function (e) { if (e.key === "Enter") sendAI(); });
+$("#btnAIPick").addEventListener("click", pickAIImage);
+$("#aiFileInput").addEventListener("change", handleAIFileChange);
+$("#btnAIThumbX").addEventListener("click", clearAIThumb);
 
 $("#btnUpload").addEventListener("click", openUploadModal);
 $("#btnUploadClose").addEventListener("click", closeUploadModal);
