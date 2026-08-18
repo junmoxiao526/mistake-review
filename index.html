@@ -1851,7 +1851,6 @@ function saveEditQuestion() {
     if (res.error) {
       alert("保存失败：" + res.error.message);
     } else {
-      alert("保存成功");
       closeEditModal();
       loadData();
     }
