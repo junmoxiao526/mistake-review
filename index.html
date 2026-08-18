@@ -341,6 +341,7 @@ footer { text-align: center; color: #9ca3af; font-size: 12px; padding: 20px 0; }
         <option value="需复习">需复习</option>
       </select>
     </div>
+    <button type="button" class="btn btn-outline clear-filter-btn" title="一键清除所有筛选条件">清除筛选</button>
     <div class="filter-count" id="filterCount"></div>
   </div>
 
@@ -767,6 +768,19 @@ function matchesKeyword(q, kw) {
   return hay.indexOf(kw) >= 0;
 }
 
+function clearFilters() {
+  state.filters.category = "";
+  state.filters.type = "";
+  state.filters.mastery = "";
+  state.filters.keyword = "";
+  const kw = $("#fKeyword"); if (kw) kw.value = "";
+  const cat = $("#fCategory"); if (cat) cat.value = "";
+  const tp = $("#fType"); if (tp) tp.value = "";
+  const ms = $("#fMastery"); if (ms) ms.value = "";
+  renderStats();
+  applyFilters();
+}
+
 function applyFilters() {
   const f = state.filters;
   const kw = f.keyword;
@@ -1090,6 +1104,11 @@ document.addEventListener("click", function (e) {
   const scb = e.target.closest(".screenshot-btn");
   if (scb) {
     captureQuestionCard(scb.closest(".question-card"), scb);
+    return;
+  }
+  const cf = e.target.closest(".clear-filter-btn");
+  if (cf) {
+    clearFilters();
     return;
   }
   const tbtn = e.target.closest(".q-draw-toolbar [data-action]");
