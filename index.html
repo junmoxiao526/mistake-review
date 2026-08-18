@@ -223,6 +223,10 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
 .mastery-btn.ok.active { background: #e8f7ef; border-color: var(--green); color: var(--green); font-weight: 600; box-shadow: 0 2px 8px rgba(24,160,88,.18); }
 .mastery-btn.review.active { background: #fdf3e0; border-color: var(--amber); color: var(--amber); font-weight: 600; box-shadow: 0 2px 8px rgba(217,138,0,.18); }
 .show-answer-btn { margin-left: auto; }
+.question-card.capturing .q-head,
+.question-card.capturing .q-foot,
+.question-card.capturing .answer-panel,
+.question-card.capturing .q-draw { display: none !important; }
 .answer-panel {
   margin-top: 12px; padding: 12px 14px; border-radius: var(--radius-sm);
   background: #f8fafc; border: 1px solid var(--border); display: none;
@@ -311,8 +315,8 @@ footer { text-align: center; color: #9ca3af; font-size: 12px; padding: 20px 0; }
   </div>
 
   <div class="charts">
-    <div class="chart-card full"><h3>板块错题数</h3><div id="chartCategory"></div></div>
-    <div class="chart-card full"><h3>题型分布</h3><div id="chartType"></div></div>
+    <div class="chart-card"><h3>板块错题数</h3><div id="chartCategory"></div></div>
+    <div class="chart-card"><h3>题型分布</h3><div id="chartType"></div></div>
   </div>
 
   <div class="filter-bar">
@@ -455,6 +459,20 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_
 const MASTERY_OPTIONS = ["未掌握", "已掌握", "需复习"];
 const DEFAULT_MASTERY = "未掌握";
 const MASTERY_KEY = "mistake_review_mastery_v1";
+
+let _h2cPromise = null;
+function loadHtml2Canvas() {
+  if (window.html2canvas) return Promise.resolve(window.html2canvas);
+  if (_h2cPromise) return _h2cPromise;
+  _h2cPromise = new Promise(function (resolve, reject) {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js";
+    s.onload = function () { resolve(window.html2canvas); };
+    s.onerror = function () { _h2cPromise = null; reject(new Error("截图组件加载失败，请检查网络后重试")); };
+    document.head.appendChild(s);
+  });
+  return _h2cPromise;
+}
 
 let isLocal = false;  // 本地后端环境（可访问 /api/*）
 let masteryMap = {};
@@ -810,6 +828,7 @@ function renderCard(q, idx) {
       '<button class="btn btn-outline show-answer-btn">显示答案</button>' +
       '<button class="btn btn-outline draw-btn" data-id="' + esc(q.id) + '">圈画</button>' +
       '<button class="btn btn-outline edit-btn" data-id="' + esc(q.id) + '">编辑</button>' +
+      '<button type="button" class="btn btn-outline screenshot-btn" title="将本题题干与选项截图保存为图片">截图</button>' +
       '<button class="btn btn-danger delete-btn" data-id="' + esc(q.id) + '">删除</button>' +
     '</div>' +
     '<div class="answer-panel">' + rows.join("") + '</div>' +
@@ -1068,6 +1087,11 @@ document.addEventListener("click", function (e) {
     openDrawMode(dwb);
     return;
   }
+  const scb = e.target.closest(".screenshot-btn");
+  if (scb) {
+    captureQuestionCard(scb.closest(".question-card"), scb);
+    return;
+  }
   const tbtn = e.target.closest(".q-draw-toolbar [data-action]");
   if (tbtn && drawSession) {
     const action = tbtn.dataset.action;
@@ -1086,6 +1110,44 @@ init();
 
 // 手写圈画：状态与事件
 let drawSession = null;
+
+function captureQuestionCard(card, btn) {
+  if (!card) return;
+  const noEl = card.querySelector(".q-no");
+  const no = noEl ? noEl.textContent.trim().replace(/\s+/g, "") : "";
+  const oldText = btn ? btn.textContent : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "截图中…";
+  }
+  loadHtml2Canvas().then(function (h2c) {
+    card.classList.add("capturing");
+    const w = card.scrollWidth, h = card.scrollHeight;
+    return h2c(card, {
+      backgroundColor: null,
+      scale: Math.min(2, window.devicePixelRatio || 1),
+      width: w, height: h,
+      windowWidth: document.documentElement.clientWidth,
+      useCORS: true
+    }).then(function (canvas) {
+      card.classList.remove("capturing");
+      const a = document.createElement("a");
+      a.download = "错题_" + (no || "题目") + ".png";
+      a.href = canvas.toDataURL("image/png");
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+  }).catch(function (err) {
+    card.classList.remove("capturing");
+    alert(err && err.message ? err.message : "截图失败，请重试");
+  }).finally(function () {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = oldText;
+    }
+  });
+}
 
 function openDrawMode(btn) {
   finishDrawSession();
