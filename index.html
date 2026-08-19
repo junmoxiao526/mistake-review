@@ -125,17 +125,17 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
 .pie-legend-dot { width: 12px; height: 12px; border-radius: 4px; flex: 0 0 auto; box-shadow: none; }
 .pie-legend-name { color: var(--text); flex: 0 0 auto; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .pie-legend-val { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.type-vbars { display: flex; align-items: flex-end; gap: 12px; padding: 6px 4px 0; min-height: 168px; }
-.type-vbar { flex: 1; display: flex; flex-direction: column; align-items: center; cursor: pointer; min-width: 0; transition: transform .18s ease; }
-.type-vbar:hover { transform: translateY(-3px); }
-.type-vbar .vbar-val { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 5px; font-variant-numeric: tabular-nums; }
-.type-vbar .vbar-track { width: 100%; max-width: 46px; height: 104px; background: #F0F1F3; border-radius: 8px; display: flex; align-items: flex-end; overflow: hidden; }
-.type-vbar .vbar-fill { width: 100%; border-radius: 8px; transition: height .45s ease, filter .18s ease; }
-.type-vbar:hover .vbar-fill { filter: brightness(1.08); }
-.type-vbar .vbar-name { font-size: 12px; color: var(--text); margin-top: 7px; text-align: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.type-vbar.active .vbar-track { background: #e8ecf8; }
-.type-vbar.active .vbar-fill { box-shadow: 0 0 0 2px var(--primary-soft), 0 0 0 3px rgba(29,43,76,.22); }
-.type-vbar.active .vbar-name { color: var(--primary); font-weight: 600; }
+.type-chart { position: relative; padding: 2px 0 0; }
+.type-chart svg { display: block; width: 100%; height: auto; }
+.type-chart .grid-line { stroke: #E7E9EF; stroke-width: 1; stroke-dasharray: 3 4; }
+.type-chart .axis-line { stroke: #C7CBD7; stroke-width: 1.2; }
+.type-chart .tick-label { font-size: 11px; fill: #8A90A3; font-family: inherit; }
+.type-chart .bar-rect { cursor: pointer; transition: opacity .18s ease; }
+.type-chart .bar-rect:hover { opacity: .82; }
+.type-chart .bar-rect.active { stroke: #3B6EF5; stroke-width: 2; }
+.type-chart .bar-val { font-size: 12.5px; font-weight: 600; fill: var(--text); text-anchor: middle; font-variant-numeric: tabular-nums; }
+.type-chart .bar-name { font-size: 12px; fill: var(--text); text-anchor: middle; }
+.type-chart .bar-name.active { fill: var(--primary); font-weight: 600; }
 
 .filter-bar {
   background: var(--card); border-radius: var(--radius); padding: 16px 18px;
@@ -762,17 +762,39 @@ function renderTypeStats(types) {
   entries = entries.filter(function (e) { return e[1] > 0; });
   if (entries.length === 0) return '<div class="empty">暂无数据</div>';
   const max = Math.max.apply(null, entries.map(function (e) { return e[1]; }));
+  const niceMax = Math.max(5, Math.ceil(max / 5) * 5);
   const colors = ["#1D2B4C", "#3B6EF5", "#0EA5E9", "#18A058", "#D98A00"];
-  const items = entries.map(function (e, i) {
-    const h = max > 0 ? Math.max(4, Math.round((e[1] / max) * 100)) : 0;
-    const activeCls = state.filters.type === e[0] ? " active" : "";
-    return '<div class="type-vbar' + activeCls + '" data-type="' + esc(e[0]) + '" title="' + esc(e[0]) + ' ' + e[1] + ' 题">' +
-      '<div class="vbar-val">' + e[1] + '</div>' +
-      '<div class="vbar-track"><div class="vbar-fill" style="height:' + h + '%;background:' + colors[i % colors.length] + '"></div></div>' +
-      '<div class="vbar-name">' + esc(e[0]) + '</div>' +
-      '</div>';
+  const W = 460, H = 252, mL = 40, mR = 12, mT = 20, mB = 46;
+  const plotW = W - mL - mR, plotH = H - mT - mB, baseY = mT + plotH;
+  const steps = 4;
+  let grid = '';
+  for (let s = 0; s <= steps; s++) {
+    const val = (niceMax / steps) * s;
+    const y = baseY - (plotH * val / niceMax);
+    grid += '<line class="grid-line" x1="' + mL + '" y1="' + y + '" x2="' + (W - mR) + '" y2="' + y + '"/>';
+    grid += '<text class="tick-label" x="' + (mL - 8) + '" y="' + (y + 4) + '" text-anchor="end">' + val + '</text>';
+  }
+  const stepW = plotW / entries.length;
+  const barW = Math.min(56, stepW * 0.56);
+  const bars = entries.map(function (e, i) {
+    const h = Math.max(2, (e[1] / niceMax) * plotH);
+    const x = mL + stepW * i + (stepW - barW) / 2;
+    const y = baseY - h;
+    const isActive = state.filters.type === e[0];
+    const active = isActive ? " active" : "";
+    const fill = colors[i % colors.length];
+    const cx = mL + stepW * i + stepW / 2;
+    return '<g>' +
+      '<rect class="bar-rect' + active + '" data-type="' + esc(e[0]) + '" x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="5" fill="' + fill + '" opacity="0.94">' +
+      '<title>' + esc(e[0]) + ' ' + e[1] + ' 题</title></rect>' +
+      '<text class="bar-val" x="' + cx.toFixed(1) + '" y="' + (y - 8).toFixed(1) + '">' + e[1] + '</text>' +
+      '<text class="bar-name' + active + '" x="' + cx.toFixed(1) + '" y="' + (baseY + 22).toFixed(1) + '">' + esc(e[0]) + '</text>' +
+      '</g>';
   }).join("");
-  return '<div class="type-vbars">' + items + '</div>';
+  return '<div class="type-chart"><svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="题型分布">' +
+    '<line class="axis-line" x1="' + mL + '" y1="' + mT + '" x2="' + mL + '" y2="' + baseY + '"/>' +
+    '<line class="axis-line" x1="' + mL + '" y1="' + baseY + '" x2="' + (W - mR) + '" y2="' + baseY + '"/>' +
+    grid + bars + '</svg></div>';
 }
 
 function filterByType(type) {
