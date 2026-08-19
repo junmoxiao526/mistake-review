@@ -189,6 +189,7 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
 .category-quick { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .q-text { font-size: 15px; font-weight: 500; margin-bottom: 10px; text-align: justify; text-justify: inter-ideograph; }
   .q-text img.q-image { display: block; max-width: 100%; height: auto; border-radius: 10px; margin: 8px 0; }
+.q-para { display: block; margin: 6px 0; text-align: justify; text-justify: inter-ideograph; }
 .q-options { margin-bottom: 10px; }
 .q-option {
   font-size: 14px; padding: 5px 0 5px 18px; color: #374151;
@@ -583,10 +584,39 @@ function splitTrailingQuestion(s) {
   return [s.trim(), ""];
 }
 
+function splitQuestionParas(s) {
+  // 申论/长材料按段落重排：段内合并物理换行（去 \n 不留空格），
+  // 段落以 空行 / 材料标题 / 编号要求子项 / 段尾终止标点 为边界，
+  // 让浏览器自动换行后 text-align: justify 可撑满整行。
+  const lines = s.split("\n").map(function (ln) { return ln.trim(); }).filter(function (ln) { return ln !== ""; });
+  const paras = [];
+  let cur = [];
+  function flush() {
+    if (cur.length) { paras.push(cur.join("")); cur = []; }
+  }
+  lines.forEach(function (ln) {
+    // 独立成行：模块标题 / 材料标题 / 编号要求子项
+    if (/^【[^】]*】$/.test(ln) || /^(材料|给定资料)\d+$/.test(ln) || /^[（(]\d+[）)]/.test(ln)) {
+      flush(); paras.push(ln); return;
+    }
+    cur.push(ln);
+    // 行尾为终止标点视为段落边界（中文句号/引号/冒号/分号/括号等）
+    if (/[。！？…“”"』」）:：;；]$/.test(ln)) flush();
+  });
+  flush();
+  return paras;
+}
+
 function joinQuestionLines(parts) {
   const out = [];
   parts.forEach(function (s) {
     if (!s) return;
+    // 含材料标题 / 空行分隔 / 模块标题+题干 的长文本走段落重排
+    if (/(^|\n)(材料|给定资料)\d+\s*$/.test(s) || /\n{2,}/.test(s) || /^【[^】]*】\n/.test(s)) {
+      const paras = splitQuestionParas(s);
+      out.push(paras.map(function (p) { return '<div class="q-para">' + esc(p) + '</div>'; }).join(""));
+      return;
+    }
     out.push(s.split("\n").map(function (ln) { return esc(ln); }).join("<br>"));
   });
   return out.join("<br>");
