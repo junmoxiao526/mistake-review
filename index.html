@@ -585,9 +585,30 @@ function splitTrailingQuestion(s) {
 }
 
 function splitQuestionParas(s) {
-  // 申论/长材料按段落重排：段内合并物理换行（去 \n 不留空格），
-  // 段落以 空行 / 材料标题 / 编号要求子项 / 段尾终止标点 为边界，
-  // 让浏览器自动换行后 text-align: justify 可撑满整行。
+  // 申论/长材料按段落重排：优先以空行 \n\n 为段落边界（与数据库修正后的
+  // 真实段落结构一致），每段内部再合并物理换行（去 \n 不留空格）；
+  // 文本无空行时才退回标点规则，让浏览器自动换行后 justify 可撑满整行。
+  const rawParas = s.split(/\n\s*\n/).map(function (p) { return p.trim(); }).filter(function (p) { return p !== ""; });
+  if (rawParas.length > 1) {
+    const paras = [];
+    rawParas.forEach(function (p) {
+      const ls = p.split("\n").map(function (ln) { return ln.trim(); }).filter(function (ln) { return ln !== ""; });
+      let cur = [];
+      function flush() {
+        if (cur.length) { paras.push(cur.join("")); cur = []; }
+      }
+      ls.forEach(function (ln) {
+        // 独立成行：模块标题 / 材料标题 / 编号要求子项
+        if (/^【[^】]*】$/.test(ln) || /^(材料|给定资料)\d+$/.test(ln) || /^[（(]\d+[）)]/.test(ln)) {
+          flush(); paras.push(ln); return;
+        }
+        cur.push(ln);
+      });
+      flush();
+    });
+    return paras;
+  }
+  // 无空行：退回标点规则
   const lines = s.split("\n").map(function (ln) { return ln.trim(); }).filter(function (ln) { return ln !== ""; });
   const paras = [];
   let cur = [];
@@ -595,13 +616,10 @@ function splitQuestionParas(s) {
     if (cur.length) { paras.push(cur.join("")); cur = []; }
   }
   lines.forEach(function (ln) {
-    // 独立成行：模块标题 / 材料标题 / 编号要求子项
     if (/^【[^】]*】$/.test(ln) || /^(材料|给定资料)\d+$/.test(ln) || /^[（(]\d+[）)]/.test(ln)) {
       flush(); paras.push(ln); return;
     }
     cur.push(ln);
-    // 行尾为终止标点视为段落边界：仅裸终止标点（。！？…）算段尾，
-    // 引号类结尾（如"大门。'"、"地方！'"）多为段内直接引语折行，不拆段
     if (/[。！？…]$/.test(ln)) flush();
   });
   flush();
