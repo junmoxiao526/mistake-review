@@ -600,8 +600,9 @@ function splitQuestionParas(s) {
       flush(); paras.push(ln); return;
     }
     cur.push(ln);
-    // 行尾为终止标点视为段落边界（中文句号/引号/冒号/分号/括号等）
-    if (/[。！？…“”"』」）:：;；]$/.test(ln)) flush();
+    // 行尾为终止标点视为段落边界：仅裸终止标点（。！？…）算段尾，
+    // 引号类结尾（如"大门。'"、"地方！'"）多为段内直接引语折行，不拆段
+    if (/[。！？…]$/.test(ln)) flush();
   });
   flush();
   return paras;
