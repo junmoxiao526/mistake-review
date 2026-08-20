@@ -136,6 +136,9 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
 .type-chart .bar-val { font-size: 12.5px; font-weight: 600; fill: var(--text); text-anchor: middle; font-variant-numeric: tabular-nums; }
 .type-chart .bar-name { font-size: 11.5px; fill: var(--text); text-anchor: middle; }
 .type-chart .bar-name.active { fill: var(--primary); font-weight: 600; }
+.type-chart .seg-val { font-size: 11px; font-weight: 600; fill: #fff; text-anchor: middle; font-variant-numeric: tabular-nums; paint-order: stroke; stroke: rgba(0,0,0,.28); stroke-width: 2px; pointer-events: none; }
+.type-chart .legend-svg-text { font-size: 11.5px; fill: var(--text); }
+.type-chart .legend-svg-dot { opacity: .94; }
 .type-chart .type-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; justify-content: center; }
 .type-chart .type-legend-item { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text); }
 .type-chart .type-legend-dot { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto; }
@@ -807,7 +810,7 @@ function filterByCategory(cat) {
 
 function renderTypeStats(ct) {
   // 堆叠柱状图：横轴=板块(category)，每板块一根柱子，柱内按题型堆叠分段，
-  // 同题型全局同色（图例按题型标注），柱顶显示板块总数。
+  // 同题型全局同色；题数显示在各柱段内部（仅数字），图例竖排于 SVG 右上角（色块+题型名）。
   const cats = Object.keys(ct || {}).filter(function (c) {
     const tt = ct[c];
     return tt && Object.keys(tt).some(function (t) { return tt[t] > 0; });
@@ -830,14 +833,16 @@ function renderTypeStats(ct) {
   const niceMax = Math.max(5, Math.ceil(maxTotal / 5) * 5);
   const colors = ["#1D2B4C", "#3B6EF5", "#0EA5E9", "#18A058", "#D98A00", "#E5484D", "#8B5CF6", "#F59E0B", "#64748B"];
   const colorOf = function (t) { return colors[typeOrder.indexOf(t) % colors.length]; };
-  const W = 460, H = 252, mL = 40, mR = 12, mT = 20, mB = 46;
-  const plotW = W - mL - mR, plotH = H - mT - mB, baseY = mT + plotH;
+  const W = 520, H = 252, mL = 40, mR = 12, mT = 20, mB = 46;
+  const legendX = W - 96;
+  const plotW = legendX - mL - 12, plotH = H - mT - mB, baseY = mT + plotH;
+  const plotRight = legendX - 8;
   const steps = 4;
   let grid = '';
   for (let s = 0; s <= steps; s++) {
     const val = Math.round((niceMax / steps) * s);
     const y = baseY - (plotH * val / niceMax);
-    grid += '<line class="grid-line" x1="' + mL + '" y1="' + y.toFixed(1) + '" x2="' + (W - mR) + '" y2="' + y.toFixed(1) + '"/>';
+    grid += '<line class="grid-line" x1="' + mL + '" y1="' + y.toFixed(1) + '" x2="' + plotRight + '" y2="' + y.toFixed(1) + '"/>';
     grid += '<text class="tick-label" x="' + (mL - 8) + '" y="' + (y + 4).toFixed(1) + '" text-anchor="end">' + val + '</text>';
   }
   const stepW = plotW / cats.length;
@@ -855,30 +860,32 @@ function renderTypeStats(ct) {
     let segs = '';
     types.forEach(function (t) {
       const cnt = ct[c][t];
-      const h = Math.max(1, (cnt / niceMax) * plotH);
+      const h = Math.max(1.5, (cnt / niceMax) * plotH);
       const y = yCursor - h;
       segs += '<rect class="bar-rect' + active + '" data-category="' + esc(c) + '" x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + h.toFixed(1) + '" fill="' + colorOf(t) + '" opacity="0.94">' +
         '<title>' + esc(c) + ' ' + esc(t) + ' ' + cnt + '/' + total + '</title></rect>';
+      // 题数显示：段高足够时居中放段内；小段放段右侧旁边（仅数字，不遮挡）
+      if (h >= 13) {
+        segs += '<text class="seg-val" x="' + cx.toFixed(1) + '" y="' + (y + h / 2 + 4).toFixed(1) + '">' + cnt + '</text>';
+      } else {
+        segs += '<text class="seg-val seg-val-side" x="' + (x + barW + 5).toFixed(1) + '" y="' + (y + h / 2 + 3.5).toFixed(1) + '">' + cnt + '</text>';
+      }
       yCursor = y;
     });
     bars += '<g>' + segs +
-      '<text class="bar-val" x="' + cx.toFixed(1) + '" y="' + (yCursor - 8).toFixed(1) + '">' + total + '</text>' +
       '<text class="bar-name' + active + '" x="' + cx.toFixed(1) + '" y="' + (baseY + 22).toFixed(1) + '">' + esc(c) + '</text>' +
       '</g>';
   });
-  const legend = typeOrder.map(function (t) {
-    let totalT = 0;
-    cats.forEach(function (c) { totalT += (ct[c][t] || 0); });
-    return '<div class="type-legend-item" title="' + esc(t) + '">' +
-      '<span class="type-legend-dot" style="background:' + colorOf(t) + '"></span>' +
-      '<span class="type-legend-name">' + esc(t) + '</span>' +
-      '<span class="type-legend-val">' + totalT + ' 题</span>' +
-      '</div>';
+  // SVG 右上角竖排图例：色块 + 题型名（不含题数）
+  const legend = typeOrder.map(function (t, i) {
+    const ly = mT + 2 + i * 18;
+    return '<rect class="legend-svg-dot" x="' + legendX + '" y="' + ly + '" width="10" height="10" rx="3" fill="' + colorOf(t) + '"/>' +
+      '<text class="legend-svg-text" x="' + (legendX + 16) + '" y="' + (ly + 9) + '">' + esc(t) + '</text>';
   }).join("");
   return '<div class="type-chart"><svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="题型分布（板块堆叠柱状图）">' +
     '<line class="axis-line" x1="' + mL + '" y1="' + mT + '" x2="' + mL + '" y2="' + baseY + '"/>' +
-    '<line class="axis-line" x1="' + mL + '" y1="' + baseY + '" x2="' + (W - mR) + '" y2="' + baseY + '"/>' +
-    grid + bars + '</svg><div class="type-legend">' + legend + '</div></div>';
+    '<line class="axis-line" x1="' + mL + '" y1="' + baseY + '" x2="' + plotRight + '" y2="' + baseY + '"/>' +
+    grid + bars + legend + '</svg></div>';
 }
 
 function filterByType(type) {
