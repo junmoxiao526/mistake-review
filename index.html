@@ -134,8 +134,12 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
 .type-chart .bar-rect:hover { opacity: .82; }
 .type-chart .bar-rect.active { stroke: #3B6EF5; stroke-width: 2; }
 .type-chart .bar-val { font-size: 12.5px; font-weight: 600; fill: var(--text); text-anchor: middle; font-variant-numeric: tabular-nums; }
-.type-chart .bar-name { font-size: 12px; fill: var(--text); text-anchor: middle; }
+.type-chart .bar-name { font-size: 11.5px; fill: var(--text); text-anchor: middle; }
 .type-chart .bar-name.active { fill: var(--primary); font-weight: 600; }
+.type-chart .type-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; justify-content: center; }
+.type-chart .type-legend-item { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text); }
+.type-chart .type-legend-dot { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto; }
+.type-chart .type-legend-val { color: var(--muted); font-variant-numeric: tabular-nums; }
 
 .filter-bar {
   background: var(--card); border-radius: var(--radius); padding: 16px 18px;
@@ -691,6 +695,8 @@ function getMastery(id) {
 
 function calcStats(questions) {
   const categories = {}, types = {}, reasons = {}, mastery = { "未掌握": 0, "已掌握": 0, "需复习": 0 };
+  // 板块 -> 题型 -> 数量（堆叠柱状图数据源）
+  const categoriesTypes = {};
   questions.forEach(function (q) {
     const c = q.category || "未分类";
     const t = q.type || "未分类";
@@ -698,11 +704,13 @@ function calcStats(questions) {
     categories[c] = (categories[c] || 0) + 1;
     types[t] = (types[t] || 0) + 1;
     reasons[r] = (reasons[r] || 0) + 1;
+    const ct = categoriesTypes[c] = categoriesTypes[c] || {};
+    ct[t] = (ct[t] || 0) + 1;
     const m = getMastery(q.id);
     if (Object.prototype.hasOwnProperty.call(mastery, m)) mastery[m] += 1;
     else mastery[DEFAULT_MASTERY] += 1;
   });
-  return { total: questions.length, categories: categories, types: types, reasons: reasons, mastery: mastery };
+  return { total: questions.length, categories: categories, types: types, reasons: reasons, mastery: mastery, categoriesTypes: categoriesTypes };
 }
 
 function shade(hex, amt) {
@@ -775,10 +783,10 @@ function renderStats() {
   };
   const typeEl = $("#chartType");
   if (typeEl) {
-    typeEl.innerHTML = renderTypeStats(s.types);
+    typeEl.innerHTML = renderTypeStats(s.categoriesTypes);
     typeEl.onclick = function (e) {
-      const el = e.target.closest("[data-type]");
-      if (el) filterByType(el.dataset.type);
+      const el = e.target.closest("[data-category]");
+      if (el) filterByCategory(el.dataset.category);
     };
   }
 }
@@ -797,53 +805,80 @@ function filterByCategory(cat) {
   if (list) list.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-function renderTypeStats(types) {
-  let entries = Object.keys(types || {}).map(function (k) { return [k, types[k]]; });
-  const order = ["片段阅读", "逻辑填空", "语句排序"];
-  entries.sort(function (a, b) {
-    const ia = order.indexOf(a[0]);
-    const ib = order.indexOf(b[0]);
-    if (ia < 0 && ib < 0) return b[1] - a[1];
-    if (ia < 0) return 1;
-    if (ib < 0) return -1;
-    return ia - ib;
+function renderTypeStats(ct) {
+  // 堆叠柱状图：横轴=板块(category)，每板块一根柱子，柱内按题型堆叠分段，
+  // 同题型全局同色（图例按题型标注），柱顶显示板块总数。
+  const cats = Object.keys(ct || {}).filter(function (c) {
+    const tt = ct[c];
+    return tt && Object.keys(tt).some(function (t) { return tt[t] > 0; });
   });
-  entries = entries.filter(function (e) { return e[1] > 0; });
-  if (entries.length === 0) return '<div class="empty">暂无数据</div>';
-  const max = Math.max.apply(null, entries.map(function (e) { return e[1]; }));
-  const niceMax = Math.max(5, Math.ceil(max / 5) * 5);
-  const colors = ["#1D2B4C", "#3B6EF5", "#0EA5E9", "#18A058", "#D98A00"];
+  if (cats.length === 0) return '<div class="empty">暂无数据</div>';
+  // 全局题型顺序（首次出现顺序），保证同题型同色
+  const typeOrder = [], seen = {};
+  cats.forEach(function (c) {
+    const tt = ct[c];
+    Object.keys(tt).forEach(function (t) {
+      if (tt[t] > 0 && !seen[t]) { seen[t] = 1; typeOrder.push(t); }
+    });
+  });
+  const totals = cats.map(function (c) {
+    let s = 0; const tt = ct[c];
+    Object.keys(tt).forEach(function (t) { s += tt[t]; });
+    return s;
+  });
+  const maxTotal = Math.max.apply(null, totals);
+  const niceMax = Math.max(5, Math.ceil(maxTotal / 5) * 5);
+  const colors = ["#1D2B4C", "#3B6EF5", "#0EA5E9", "#18A058", "#D98A00", "#E5484D", "#8B5CF6", "#F59E0B", "#64748B"];
+  const colorOf = function (t) { return colors[typeOrder.indexOf(t) % colors.length]; };
   const W = 460, H = 252, mL = 40, mR = 12, mT = 20, mB = 46;
   const plotW = W - mL - mR, plotH = H - mT - mB, baseY = mT + plotH;
   const steps = 4;
   let grid = '';
   for (let s = 0; s <= steps; s++) {
-    const val = (niceMax / steps) * s;
+    const val = Math.round((niceMax / steps) * s);
     const y = baseY - (plotH * val / niceMax);
-    grid += '<line class="grid-line" x1="' + mL + '" y1="' + y + '" x2="' + (W - mR) + '" y2="' + y + '"/>';
-    grid += '<text class="tick-label" x="' + (mL - 8) + '" y="' + (y + 4) + '" text-anchor="end">' + val + '</text>';
+    grid += '<line class="grid-line" x1="' + mL + '" y1="' + y.toFixed(1) + '" x2="' + (W - mR) + '" y2="' + y.toFixed(1) + '"/>';
+    grid += '<text class="tick-label" x="' + (mL - 8) + '" y="' + (y + 4).toFixed(1) + '" text-anchor="end">' + val + '</text>';
   }
-  const stepW = plotW / entries.length;
-  const barW = Math.min(56, stepW * 0.56);
-  const bars = entries.map(function (e, i) {
-    const h = Math.max(2, (e[1] / niceMax) * plotH);
+  const stepW = plotW / cats.length;
+  const barW = Math.min(78, stepW * 0.58);
+  let bars = '';
+  cats.forEach(function (c, i) {
     const x = mL + stepW * i + (stepW - barW) / 2;
-    const y = baseY - h;
-    const isActive = state.filters.type === e[0];
-    const active = isActive ? " active" : "";
-    const fill = colors[i % colors.length];
     const cx = mL + stepW * i + stepW / 2;
-    return '<g>' +
-      '<rect class="bar-rect' + active + '" data-type="' + esc(e[0]) + '" x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="5" fill="' + fill + '" opacity="0.94">' +
-      '<title>' + esc(e[0]) + ' ' + e[1] + ' 题</title></rect>' +
-      '<text class="bar-val" x="' + cx.toFixed(1) + '" y="' + (y - 8).toFixed(1) + '">' + e[1] + '</text>' +
-      '<text class="bar-name' + active + '" x="' + cx.toFixed(1) + '" y="' + (baseY + 22).toFixed(1) + '">' + esc(e[0]) + '</text>' +
+    const total = totals[i];
+    const isActive = state.filters.category === c;
+    const active = isActive ? " active" : "";
+    const types = Object.keys(ct[c]).filter(function (t) { return ct[c][t] > 0; })
+      .sort(function (a, b) { return typeOrder.indexOf(a) - typeOrder.indexOf(b); });
+    let yCursor = baseY;
+    let segs = '';
+    types.forEach(function (t) {
+      const cnt = ct[c][t];
+      const h = Math.max(1, (cnt / niceMax) * plotH);
+      const y = yCursor - h;
+      segs += '<rect class="bar-rect' + active + '" data-category="' + esc(c) + '" x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + h.toFixed(1) + '" fill="' + colorOf(t) + '" opacity="0.94">' +
+        '<title>' + esc(c) + ' ' + esc(t) + ' ' + cnt + '/' + total + '</title></rect>';
+      yCursor = y;
+    });
+    bars += '<g>' + segs +
+      '<text class="bar-val" x="' + cx.toFixed(1) + '" y="' + (yCursor - 8).toFixed(1) + '">' + total + '</text>' +
+      '<text class="bar-name' + active + '" x="' + cx.toFixed(1) + '" y="' + (baseY + 22).toFixed(1) + '">' + esc(c) + '</text>' +
       '</g>';
+  });
+  const legend = typeOrder.map(function (t) {
+    let totalT = 0;
+    cats.forEach(function (c) { totalT += (ct[c][t] || 0); });
+    return '<div class="type-legend-item" title="' + esc(t) + '">' +
+      '<span class="type-legend-dot" style="background:' + colorOf(t) + '"></span>' +
+      '<span class="type-legend-name">' + esc(t) + '</span>' +
+      '<span class="type-legend-val">' + totalT + ' 题</span>' +
+      '</div>';
   }).join("");
-  return '<div class="type-chart"><svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="题型分布">' +
+  return '<div class="type-chart"><svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="题型分布（板块堆叠柱状图）">' +
     '<line class="axis-line" x1="' + mL + '" y1="' + mT + '" x2="' + mL + '" y2="' + baseY + '"/>' +
     '<line class="axis-line" x1="' + mL + '" y1="' + baseY + '" x2="' + (W - mR) + '" y2="' + baseY + '"/>' +
-    grid + bars + '</svg></div>';
+    grid + bars + '</svg><div class="type-legend">' + legend + '</div></div>';
 }
 
 function filterByType(type) {
