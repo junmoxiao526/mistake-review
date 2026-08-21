@@ -1302,7 +1302,7 @@ document.addEventListener("click", function (e) {
   const mb = e.target.closest(".mastery-btn");
   if (mb) {
     const id = mb.dataset.id;
-    const targetM = state.filters.mastery === "未掌握" ? "需复习" : "未掌握";
+    const targetM = "未掌握";
     setAnswerMastery(id, targetM, !!state.filters.mastery);
     return;
   }
