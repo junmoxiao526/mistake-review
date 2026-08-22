@@ -705,8 +705,9 @@ const DEFAULT_MASTERY = "未掌握";
 const MASTERY_KEY = "mistake_review_mastery_v1";
 
 // ===== 艾宾浩斯遗忘曲线 - 每日复习计划 =====
-// 存储方案：mastery 表无扩展列（REST 无法建列，ALTER 需控制台权限），
-// 复习计划以 localStorage 为主（键 PLAN_KEY），服务端字段尽力写入（失败静默）。
+// 存储方案：云端 mastery 表字段为主（first_reviewed_at/stage/next_review_date/wrong_count，
+// 已在 Supabase 控制台建列并回填 64 条历史）；localStorage 为本地兜底与离线缓存；
+// 读取云端优先、本地独有计划上传合并；作答后双写云端+本地。
 const REVIEW_INTERVAL = [1, 2, 4, 7, 15, 30]; // stage 0~5 对应间隔（天）
 const PLAN_KEY = "ebbinghaus_plan_v1";
 const REVIEW_PLAN_VERSION = 1;
@@ -742,38 +743,65 @@ function saveReviewPlan() {
 function getReviewPlan(id) {
   return reviewPlanMap[id] || null;
 }
-// 历史迁移：首次打开页面且本地无计划时，从 mastery 表作答记录回填
-// （有 updated_at：作答日+1；无：今天+1；从未作答的题不创建计划）
-function migrateReviewPlanFromMastery(mRows) {
-  if (!mRows || Object.keys(reviewPlanMap).length > 0) return;
+// 云端行 -> 本地计划对象（completed 由 stage>=6 推断）
+function cloudToPlan(r) {
+  if (!r || !r.id) return null;
+  if (r.first_reviewed_at == null && r.stage == null && r.next_review_date == null && r.wrong_count == null) return null;
+  const stage = r.stage == null ? 0 : Number(r.stage);
+  const completed = stage >= REVIEW_INTERVAL.length;
+  return {
+    first_reviewed_at: r.first_reviewed_at || null,
+    stage: stage,
+    next_review_date: completed ? null : (r.next_review_date || null),
+    wrong_count: r.wrong_count == null ? 0 : Number(r.wrong_count),
+    completed: completed,
+  };
+}
+// 本地计划 -> 云端字段值
+function planToCloud(p) {
+  return {
+    first_reviewed_at: p.first_reviewed_at || null,
+    stage: p.stage == null ? 0 : Number(p.stage),
+    next_review_date: p.completed ? null : (p.next_review_date || null),
+    wrong_count: p.wrong_count == null ? 0 : Number(p.wrong_count),
+  };
+}
+// 写云端 mastery 表字段（双写中的云端侧；失败时本地已保存作为兜底）
+function writeServerPlan(id, plan) {
+  supabaseClient.from("mastery").update(planToCloud(plan)).eq("id", id).then(function (res) {
+    if (res.error) console.warn("复习计划云端写入失败(本地已保存):", res.error.message);
+  });
+}
+// 合并云端与本地计划：云端优先（不一致以云端为准）；云端无计划时上传本地独有计划；
+// 两者皆无时从作答记录回填创建（首次打开，避免重复创建）。
+function mergeReviewPlansFromMastery(mRows) {
+  if (!mRows) return;
+  const localHasAny = Object.keys(reviewPlanMap).length > 0;
   const today = reviewTodayStr();
+  const merged = {};
   (mRows || []).forEach(function (r) {
     if (!r || !r.id) return;
-    const ts = r.updated_at;
-    const base = ts ? String(ts).slice(0, 10) : today;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(base)) return;
-    reviewPlanMap[r.id] = {
-      first_reviewed_at: base,
-      stage: 0,
-      next_review_date: reviewAddDays(base, 1),
-      wrong_count: 0,
-      completed: false,
-    };
+    const cp = cloudToPlan(r);
+    if (cp) {
+      merged[r.id] = cp;                 // 云端为准
+    } else if (localHasAny && reviewPlanMap[r.id]) {
+      merged[r.id] = reviewPlanMap[r.id]; // 本地独有计划：保留并上传合并到云端
+      writeServerPlan(r.id, reviewPlanMap[r.id]);
+    } else {
+      const ts = r.updated_at;
+      const base = ts ? String(ts).slice(0, 10) : today;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(base)) return;
+      merged[r.id] = {
+        first_reviewed_at: base,
+        stage: 0,
+        next_review_date: reviewAddDays(base, 1),
+        wrong_count: 0,
+        completed: false,
+      };
+    }
   });
+  reviewPlanMap = merged;
   saveReviewPlan();
-}
-// 尽力写服务端（mastery 表字段，REST 列不存在时静默失败，不影响本地计划）
-function tryServerPlanWrite(id, plan) {
-  supabaseClient.from("mastery").update({
-    first_reviewed_at: plan.first_reviewed_at,
-    stage: plan.stage,
-    next_review_date: plan.next_review_date,
-    wrong_count: plan.wrong_count,
-  }).eq("id", id).then(function (res) {
-    // 列不存在时静默忽略，以 localStorage 为准
-    if (res.error && res.error.code && res.error.code === "PGRST204") return;
-    if (res.error) console.warn("复习计划服务端写入失败(不影响本地):", res.error.message);
-  });
 }
 // 作答后更新复习计划：做对 stage+1（走完30天标记长期掌握）；做错重置；首次作答创建计划
 function onReviewAnswer(id, correct) {
@@ -799,7 +827,7 @@ function onReviewAnswer(id, correct) {
   }
   reviewPlanMap[id] = p;
   saveReviewPlan();
-  tryServerPlanWrite(id, p);
+  writeServerPlan(id, p);
   updateReviewBanner();
 }
 function isReviewDue(p, today) {
@@ -1768,7 +1796,7 @@ function loadData() {
     masteryMap = {};
     (mRes.data || []).forEach(function (r) { if (r.id) masteryMap[r.id] = r.mastery; });
     reviewPlanMap = loadReviewPlan();
-    migrateReviewPlanFromMastery(mRes.data || []);
+    mergeReviewPlansFromMastery(mRes.data || []);
     serverStats = null;
     applyServerData(qRes.data || []);
     updateReviewBanner();
@@ -1859,6 +1887,12 @@ document.addEventListener("click", function (e) {
         delete masteryMap[id];
         if (reviewPlanMap) delete reviewPlanMap[id];
         saveReviewPlan();
+        // 同步清理云端计划字段（题目已删，计划随题清除）
+        supabaseClient.from("mastery").update({
+          first_reviewed_at: null, stage: null, next_review_date: null, wrong_count: null
+        }).eq("id", id).then(function (res) {
+          if (res.error) console.warn("复习计划云端清理失败:", res.error.message);
+        });
         serverStats = null;
         renderStats();
         applyFilters();
