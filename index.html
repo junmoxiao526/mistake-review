@@ -411,6 +411,83 @@ footer { text-align: center; color: #999999; font-size: 12px; padding: 20px 0; }
 }
 .search-tip button:hover { background: rgba(138, 90, 27, .14); color: #8A5A1B; }
 .search-tip button + button { margin-left: 3px; }
+
+/* ===== 艾宾浩斯复习推送 - 今日待复习模块 ===== */
+.review-banner {
+  margin-bottom: 16px;
+  border: 1px solid #D8C9A8;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #FFF9EC 0%, #FDF3DC 100%);
+  box-shadow: 0 2px 10px rgba(138, 90, 27, .08);
+  overflow: hidden;
+}
+.review-banner-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  cursor: pointer;
+  user-select: none;
+}
+.review-banner-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #6B4E2B;
+}
+.review-banner-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 11px;
+  background: #E5484D;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.review-banner-overdue {
+  font-size: 12px;
+  color: #C0392B;
+  background: #FDECEC;
+  border: 1px solid #F5C6C6;
+  border-radius: 8px;
+  padding: 2px 8px;
+}
+.review-banner-done {
+  font-size: 13px;
+  color: #18A058;
+  font-weight: 600;
+}
+.review-banner-toggle {
+  margin-left: auto;
+  border: 1px solid #D8C9A8;
+  background: #fff;
+  color: #6B4E2B;
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.review-banner-toggle:hover { background: #F5EBD3; }
+.review-panel {
+  border-top: 1px dashed #E7DCC2;
+  padding: 12px 16px 16px;
+}
+.review-panel-tip {
+  font-size: 12px;
+  color: #8A5A1B;
+  margin-bottom: 10px;
+}
+.review-panel-body .empty {
+  text-align: center;
+  color: #18A058;
+  padding: 18px 0;
+  font-size: 14px;
+}
 </style>
 </head>
 <body>
@@ -428,6 +505,20 @@ footer { text-align: center; color: #999999; font-size: 12px; padding: 20px 0; }
 </header>
 
 <div class="container" id="app">
+  <div class="review-banner" id="reviewBanner" style="display:none;">
+    <div class="review-banner-head" id="reviewBannerHead">
+      <span class="review-banner-title">今日待复习</span>
+      <span class="review-banner-badge" id="reviewCount" style="display:none;">0</span>
+      <span class="review-banner-overdue" id="reviewOverdue" style="display:none;"></span>
+      <span class="review-banner-done" id="reviewDone" style="display:none;">今日复习已完成</span>
+      <button type="button" class="review-banner-toggle" id="reviewToggle">展开清单</button>
+    </div>
+    <div class="review-panel" id="reviewPanel" style="display:none;">
+      <div class="review-panel-tip" id="reviewTip"></div>
+      <div class="review-panel-body" id="reviewPanelBody"></div>
+    </div>
+  </div>
+
   <div class="stat-cards" id="statCards">
     <div class="stat-card total"><div class="num" id="stTotal">-</div><div class="label">错题总数</div></div>
     <div class="stat-card weak"><div class="num" id="stWeak">-</div><div class="label">未掌握</div></div>
@@ -612,6 +703,166 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_
 const MASTERY_OPTIONS = ["未掌握", "已掌握", "需复习"];
 const DEFAULT_MASTERY = "未掌握";
 const MASTERY_KEY = "mistake_review_mastery_v1";
+
+// ===== 艾宾浩斯遗忘曲线 - 每日复习计划 =====
+// 存储方案：mastery 表无扩展列（REST 无法建列，ALTER 需控制台权限），
+// 复习计划以 localStorage 为主（键 PLAN_KEY），服务端字段尽力写入（失败静默）。
+const REVIEW_INTERVAL = [1, 2, 4, 7, 15, 30]; // stage 0~5 对应间隔（天）
+const PLAN_KEY = "ebbinghaus_plan_v1";
+const REVIEW_PLAN_VERSION = 1;
+let reviewPlanMap = {}; // id -> {first_reviewed_at, stage, next_review_date, wrong_count, completed}
+
+function reviewTodayStr() {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function reviewAddDays(dateStr, n) {
+  const parts = String(dateStr).split("-");
+  const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  d.setDate(d.getDate() + n);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function loadReviewPlan() {
+  try {
+    const raw = localStorage.getItem(PLAN_KEY);
+    if (!raw) return {};
+    const data = JSON.parse(raw);
+    return (data && typeof data === "object" && !Array.isArray(data)) ? data : {};
+  } catch (e) {
+    return {};
+  }
+}
+function saveReviewPlan() {
+  try {
+    localStorage.setItem(PLAN_KEY, JSON.stringify(reviewPlanMap));
+  } catch (e) {
+    // localStorage 不可用时静默降级
+  }
+}
+function getReviewPlan(id) {
+  return reviewPlanMap[id] || null;
+}
+// 历史迁移：首次打开页面且本地无计划时，从 mastery 表作答记录回填
+// （有 updated_at：作答日+1；无：今天+1；从未作答的题不创建计划）
+function migrateReviewPlanFromMastery(mRows) {
+  if (!mRows || Object.keys(reviewPlanMap).length > 0) return;
+  const today = reviewTodayStr();
+  (mRows || []).forEach(function (r) {
+    if (!r || !r.id) return;
+    const ts = r.updated_at;
+    const base = ts ? String(ts).slice(0, 10) : today;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(base)) return;
+    reviewPlanMap[r.id] = {
+      first_reviewed_at: base,
+      stage: 0,
+      next_review_date: reviewAddDays(base, 1),
+      wrong_count: 0,
+      completed: false,
+    };
+  });
+  saveReviewPlan();
+}
+// 尽力写服务端（mastery 表字段，REST 列不存在时静默失败，不影响本地计划）
+function tryServerPlanWrite(id, plan) {
+  supabaseClient.from("mastery").update({
+    first_reviewed_at: plan.first_reviewed_at,
+    stage: plan.stage,
+    next_review_date: plan.next_review_date,
+    wrong_count: plan.wrong_count,
+  }).eq("id", id).then(function (res) {
+    // 列不存在时静默忽略，以 localStorage 为准
+    if (res.error && res.error.code && res.error.code === "PGRST204") return;
+    if (res.error) console.warn("复习计划服务端写入失败(不影响本地):", res.error.message);
+  });
+}
+// 作答后更新复习计划：做对 stage+1（走完30天标记长期掌握）；做错重置；首次作答创建计划
+function onReviewAnswer(id, correct) {
+  const today = reviewTodayStr();
+  let p = reviewPlanMap[id];
+  if (!p) {
+    p = { first_reviewed_at: today, stage: 0, next_review_date: reviewAddDays(today, 1), wrong_count: 0, completed: false };
+  } else if (correct) {
+    const ns = (Number(p.stage) || 0) + 1;
+    if (ns >= REVIEW_INTERVAL.length) {
+      p.stage = REVIEW_INTERVAL.length;
+      p.completed = true;
+      p.next_review_date = null;
+    } else {
+      p.stage = ns;
+      p.next_review_date = reviewAddDays(today, REVIEW_INTERVAL[ns]);
+    }
+  } else {
+    p.stage = 0;
+    p.next_review_date = reviewAddDays(today, 1);
+    p.wrong_count = (Number(p.wrong_count) || 0) + 1;
+    p.completed = false;
+  }
+  reviewPlanMap[id] = p;
+  saveReviewPlan();
+  tryServerPlanWrite(id, p);
+  updateReviewBanner();
+}
+function isReviewDue(p, today) {
+  if (!p || p.completed) return false;
+  return !!p.next_review_date && p.next_review_date <= today;
+}
+function dueReviewQuestions(today) {
+  return allQuestions.filter(function (q) {
+    return isReviewDue(getReviewPlan(q.id), today);
+  });
+}
+function renderReviewPanel() {
+  const body = $("#reviewPanelBody");
+  if (!body) return;
+  const today = reviewTodayStr();
+  const due = dueReviewQuestions(today);
+  const tip = $("#reviewTip");
+  if (tip) {
+    const overdue = due.filter(function (q) {
+      const p = getReviewPlan(q.id);
+      return p && p.next_review_date && p.next_review_date < today;
+    }).length;
+    tip.textContent = due.length
+      ? "共 " + due.length + " 题待复习（含逾期 " + overdue + " 题）。做对推进阶段，做错则重置回第 1 天（明天再次复习）。"
+      : "今日全部复习完成，明天再来巩固。";
+  }
+  if (due.length === 0) {
+    body.innerHTML = '<div class="empty">今日复习已完成</div>';
+    return;
+  }
+  const ordered = due.slice().sort(function (a, b) {
+    return allQuestions.findIndex(function (x) { return x.id === a.id; }) -
+           allQuestions.findIndex(function (x) { return x.id === b.id; });
+  });
+  body.innerHTML = groupQuestions(ordered).map(renderGroup).join("");
+}
+function updateReviewBanner() {
+  const banner = $("#reviewBanner");
+  if (!banner) return;
+  const today = reviewTodayStr();
+  const due = dueReviewQuestions(today);
+  const overdue = due.filter(function (q) {
+    const p = getReviewPlan(q.id);
+    return p && p.next_review_date && p.next_review_date < today;
+  }).length;
+  const hasPlan = Object.keys(reviewPlanMap).length > 0;
+  banner.style.display = hasPlan ? "" : "none";
+  const countEl = $("#reviewCount");
+  const overdueEl = $("#reviewOverdue");
+  const doneEl = $("#reviewDone");
+  if (due.length > 0) {
+    if (countEl) { countEl.style.display = ""; countEl.textContent = due.length; }
+    if (overdueEl) { overdueEl.style.display = overdue > 0 ? "" : "none"; overdueEl.textContent = "逾期 " + overdue + " 题"; }
+    if (doneEl) doneEl.style.display = "none";
+  } else {
+    if (countEl) countEl.style.display = "none";
+    if (overdueEl) overdueEl.style.display = "none";
+    if (doneEl) doneEl.style.display = "";
+  }
+  // 面板展开时刷新清单内容
+  const panel = $("#reviewPanel");
+  if (panel && panel.style.display !== "none") renderReviewPanel();
+}
 
 let _h2cPromise = null;
 function loadHtml2Canvas() {
@@ -1418,7 +1669,8 @@ function checkOptionAnswer(optEl) {
 
   if (correctLetters.indexOf(optLetter) >= 0) {
     optEl.classList.add("correct");
-    // 选对：掌握状态归为已掌握
+    // 选对：掌握状态归为已掌握；复习计划阶段推进
+    onReviewAnswer(id, true);
     const curM = q.mastery || "未掌握";
     if (curM !== "已掌握") {
       setAnswerMastery(id, "已掌握", !!state.filters.mastery);
@@ -1429,7 +1681,8 @@ function checkOptionAnswer(optEl) {
       const l = (el.dataset.opt || "").toUpperCase();
       if (correctLetters.indexOf(l) >= 0) el.classList.add("correct");
     });
-    // 选错：当前筛选为"未掌握"时归入需复习，否则归入未掌握
+    // 选错：复习计划重置回第 1 天；当前筛选为"未掌握"时归入需复习，否则归入未掌握
+    onReviewAnswer(id, false);
     const curM2 = q.mastery || "未掌握";
     const targetM = state.filters.mastery === "未掌握" ? "需复习" : "未掌握";
     if (curM2 !== targetM) {
@@ -1514,8 +1767,11 @@ function loadData() {
     if (qRes.error) throw qRes.error;
     masteryMap = {};
     (mRes.data || []).forEach(function (r) { if (r.id) masteryMap[r.id] = r.mastery; });
+    reviewPlanMap = loadReviewPlan();
+    migrateReviewPlanFromMastery(mRes.data || []);
     serverStats = null;
     applyServerData(qRes.data || []);
+    updateReviewBanner();
   }).catch(function (e) {
     $("#list").innerHTML = '<div class="empty">数据加载失败：' + esc(e.message || e) + '</div>';
   });
@@ -1540,6 +1796,34 @@ $("#fKeyword").addEventListener("input", function (e) { state.filters.keyword = 
 $("#fCategory").addEventListener("change", function (e) { state.filters.category = e.target.value; applyFilters(); });
 $("#fType").addEventListener("change", function (e) { state.filters.type = e.target.value; applyFilters(); });
 $("#fMastery").addEventListener("change", function (e) { state.filters.mastery = e.target.value; applyFilters(); });
+
+// 艾宾浩斯复习模块：展开/折叠
+$("#reviewBannerHead").addEventListener("click", function (e) {
+  if (e.target.closest("#reviewToggle")) {
+    const panel = $("#reviewPanel");
+    const open = panel.style.display !== "none";
+    if (open) {
+      panel.style.display = "none";
+      $("#reviewToggle").textContent = "展开清单";
+    } else {
+      renderReviewPanel();
+      panel.style.display = "";
+      $("#reviewToggle").textContent = "折叠清单";
+    }
+    return;
+  }
+  // 点击横幅头部（非按钮区域）同样切换
+  const panel = $("#reviewPanel");
+  const open = panel.style.display !== "none";
+  if (open) {
+    panel.style.display = "none";
+    $("#reviewToggle").textContent = "展开清单";
+  } else {
+    renderReviewPanel();
+    panel.style.display = "";
+    $("#reviewToggle").textContent = "折叠清单";
+  }
+});
 
 document.addEventListener("click", function (e) {
   const ce = e.target.closest(".tag-cat-edit");
@@ -1573,9 +1857,12 @@ document.addEventListener("click", function (e) {
         }
         allQuestions = allQuestions.filter(function (q) { return q.id !== id; });
         delete masteryMap[id];
+        if (reviewPlanMap) delete reviewPlanMap[id];
+        saveReviewPlan();
         serverStats = null;
         renderStats();
         applyFilters();
+        updateReviewBanner();
       });
   }
   const ob = e.target.closest(".q-option");
