@@ -197,6 +197,16 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
 .q-text { font-size: 15px; font-weight: 500; margin-bottom: 10px; text-align: justify; text-justify: inter-ideograph; }
   .q-text img.q-image { display: block; max-width: 100%; height: auto; border-radius: 10px; margin: 8px 0; }
 .q-para { display: block; margin: 6px 0; text-align: justify; text-justify: inter-ideograph; text-indent: 2em; }
+/* 材料内嵌图片（资料分析图表渲染） */
+.q-figure { margin: 10px 0; text-align: center; }
+.q-figure img.q-material-img { max-width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; }
+.q-para img.q-material-img { max-width: 100%; height: auto; vertical-align: middle; border-radius: 4px; }
+/* 同材料多题聚合 */
+.question-group { border: 1px dashed var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; background: var(--bg2); }
+.question-group .group-material { margin-bottom: 4px; padding: 4px 2px 8px; }
+.question-group .group-material-title { font-size: 13px; font-weight: 600; color: var(--primary); margin: 0 0 4px; }
+.question-group .group-questions .question-card { box-shadow: none; border: 1px solid var(--border); margin-bottom: 12px; }
+.question-group .group-questions .question-card:last-child { margin-bottom: 0; }
 .q-options { margin-bottom: 10px; }
 .q-option {
   font-size: 14px; padding: 5px 0 5px 18px; color: #374151;
@@ -676,6 +686,89 @@ function splitTrailingQuestion(s) {
   return [s.trim(), ""];
 }
 
+// 材料内嵌图片标记：![说明](data:image/png;base64,xxx)（与"question 以 data:image 开头=整题图片"约定并存）
+const IMG_MARK_RE = /!\[([^\]]*)\]\((data:image\/[^)]+)\)/;
+
+function renderParaWithImages(p, wrap) {
+  if (!IMG_MARK_RE.test(p)) {
+    return '<div class="q-para">' + wrap(p) + '</div>';
+  }
+  // 整段仅为一张图片标记 → 独立图容器（不缩进）
+  if (/^!\[[^\]]*\]\(data:image\/[^)]+\)$/.test(p)) {
+    const alt = p.slice(2, p.indexOf("]("));
+    const src = p.slice(p.indexOf("](") + 2, p.length - 1);
+    return '<div class="q-figure"><img class="q-material-img" src="' + src + '" alt="' + esc(alt) + '"></div>';
+  }
+  // 文字中内嵌图片标记 → 拆分为文字段 + img
+  const segs = [];
+  let rest = p;
+  while (rest) {
+    const m = rest.match(IMG_MARK_RE);
+    if (!m) { segs.push(wrap(rest)); break; }
+    if (m.index > 0) segs.push(wrap(rest.slice(0, m.index)));
+    segs.push('<img class="q-material-img" src="' + m[2] + '" alt="' + esc(m[1]) + '">');
+    rest = rest.slice(m.index + m[0].length);
+  }
+  return '<div class="q-para">' + segs.join("") + '</div>';
+}
+
+// 将 "材料 + 题干" 拆分：材料部分 = 引导语+材料正文（含图片标记），题干 = "N. xxx"
+function splitMaterialQuestion(s) {
+  const t = String(s == null ? "" : s).replace(/\r/g, "");
+  if (!t) return ["", ""];
+  if (t.indexOf("data:image") === 0) return ["", t];
+  const m = t.match(/\n{2,}\s*(\d{1,2})\s*[.、．]/);
+  if (m && m.index > 0) {
+    return [t.slice(0, m.index).trim(), t.slice(m.index).replace(/^\n{2,}\s*/, "").trim()];
+  }
+  return [t, ""];
+}
+
+// 分组渲染时题干部分渲染（不含共享材料）
+function renderQuestionText(q) {
+  const parts = splitMaterialQuestion(q.question || "");
+  if (parts[1]) {
+    return formatQuestionText(Object.assign({}, q, { question: parts[1] }));
+  }
+  return formatQuestionText(q);
+}
+
+// 按 material_group 聚合（保持筛选后顺序与全局序号）
+function groupQuestions(questions) {
+  const groups = [];
+  const index = new Map();
+  questions.forEach(function (q, i) {
+    const g = q.material_group;
+    if (!g) {
+      groups.push({ material_group: "", items: [{ q: q, idx: i }] });
+      return;
+    }
+    if (!index.has(g)) {
+      index.set(g, groups.length);
+      groups.push({ material_group: g, items: [] });
+    }
+    groups[index.get(g)].items.push({ q: q, idx: i });
+  });
+  return groups;
+}
+
+function renderGroup(g) {
+  // 单题（无共享材料 或 组内仅剩1题）：按原逻辑整卡渲染（材料含在卡片内）
+  if (!g.material_group || g.items.length < 2) {
+    return g.items.map(function (x) { return renderCard(x.q, x.idx, false); }).join("");
+  }
+  // 组内>=2题：材料只渲染一次（取全量中该组第一条，保证筛选后材料仍完整）
+  const anchor = allQuestions.find(function (q) { return q.material_group === g.material_group; }) || g.items[0].q;
+  const parts = splitMaterialQuestion(anchor.question || "");
+  const materialHtml = parts[0]
+    ? '<div class="group-material"><div class="group-material-title">【材料】</div><div class="q-text">' +
+      formatQuestionText(Object.assign({}, anchor, { question: parts[0] })) +
+      '</div></div>'
+    : "";
+  const cards = g.items.map(function (x) { return renderCard(x.q, x.idx, true); }).join("");
+  return '<div class="question-group">' + materialHtml + '<div class="group-questions">' + cards + '</div></div>';
+}
+
 function splitQuestionParas(s) {
   // 申论/长材料按段落重排：优先以空行 \n\n 为段落边界（与数据库修正后的
   // 真实段落结构一致），每段内部再合并物理换行（去 \n 不留空格）；
@@ -726,7 +819,12 @@ function joinQuestionLines(parts, useDict) {
     // 含材料标题 / 空行分隔 / 模块标题+题干 的长文本走段落重排
     if (/(^|\n)(材料|给定资料)\d+\s*$/.test(s) || /\n{2,}/.test(s) || /^【[^】]*】\n/.test(s)) {
       const paras = splitQuestionParas(s);
-      out.push(paras.map(function (p) { return '<div class="q-para">' + wrap(p) + '</div>'; }).join(""));
+      out.push(paras.map(function (p) { return renderParaWithImages(p, wrap); }).join(""));
+      return;
+    }
+    // 单行含内嵌图片标记（无空行段落）也走图片渲染
+    if (IMG_MARK_RE.test(s)) {
+      out.push(renderParaWithImages(s, wrap));
       return;
     }
     out.push(s.split("\n").map(wrap).join("<br>"));
@@ -1054,7 +1152,7 @@ function masteryClass(m) {
   return "weak";
 }
 
-function renderCard(q, idx) {
+function renderCard(q, idx, inGroup) {
   const mClass = masteryClass(q.mastery);
   const useDict = q.category === "言语理解与表达";
   const opts = splitOptions(q.options);
@@ -1087,7 +1185,7 @@ function renderCard(q, idx) {
       '<span class="q-no">第 ' + (idx + 1) + ' 题</span>' +
       '<button type="button" class="tag tag-cat tag-cat-edit" data-id="' + esc(q.id) + '" data-category="' + esc(q.category || "未分类") + '" title="点击编辑板块">' + esc(q.category || "未分类") + '</button>' +
     '</div>' +
-    '<div class="q-text">' + formatQuestionText(q) + '</div>' +
+    '<div class="q-text">' + (inGroup ? renderQuestionText(q) : formatQuestionText(q)) + '</div>' +
     optsHtml +
     '<div class="q-foot">' +
       '<div class="mastery-group">' + masteryBtns + '</div>' +
@@ -1120,7 +1218,7 @@ function renderList() {
     list.innerHTML = '<div class="empty">当前筛选下没有错题</div>';
     return;
   }
-  list.innerHTML = state.questions.map(renderCard).join("");
+  list.innerHTML = groupQuestions(state.questions).map(renderGroup).join("");
 }
 
 function setMastery(id, mastery) {
@@ -2030,6 +2128,8 @@ function openEditModal(qid) {
   const qText = q.question || "";
   if (String(qText).indexOf("data:image") === 0) {
     $("#fEditQuestion").value = "[图片题] 题干为图片（保存时自动保留原图，此处无需修改）";
+  } else if (IMG_MARK_RE.test(qText)) {
+    $("#fEditQuestion").value = qText.replace(IMG_MARK_RE, "[材料图片]");
   } else {
     $("#fEditQuestion").value = qText;
   }
@@ -2053,9 +2153,17 @@ function saveEditQuestion() {
   if (!qid) return;
   const editQ = allQuestions.find(function (item) { return item.id === qid; });
   const isImageQ = editQ && String(editQ.question || "").indexOf("data:image") === 0;
+  const imgMarks = editQ ? (String(editQ.question || "").match(IMG_MARK_RE) || []) : [];
   let question = $("#fEditQuestion").value.trim();
   if (isImageQ) {
     question = String(editQ.question || ""); // 图片题保存时保留原图
+  } else if (imgMarks.length) {
+    let k = 0; // 材料图片题保存时按顺序还原图片标记
+    question = question.replace(/\[材料图片\]/g, function () { return k < imgMarks.length ? imgMarks[k++] : ""; });
+    if (!question) {
+      alert("题干不能为空");
+      return;
+    }
   } else if (!question) {
     alert("题干不能为空");
     return;
