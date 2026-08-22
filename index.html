@@ -1609,11 +1609,11 @@ function renderCard(q, idx, inGroup) {
   '</div>';
 }
 
-// 圈画工具栏 HTML（题干与材料共用；含画笔粗细滑块 2~12px）
+// 圈画工具栏 HTML（题干与材料共用；含画笔粗细滑块 1~8px）
 function drawToolbarHtml() {
   return '<button type="button" class="q-draw-tbtn active" data-action="color-red" title="红色画笔">红</button>' +
     '<button type="button" class="q-draw-tbtn" data-action="color-black" title="黑色画笔">黑</button>' +
-    '<input type="range" class="q-draw-size" min="2" max="12" step="1" value="' + getDrawSizePref() + '" title="画笔粗细">' +
+    '<input type="range" class="q-draw-size" min="1" max="8" step="1" value="' + getDrawSizePref() + '" title="画笔粗细">' +
     '<span class="q-draw-size-label"></span>' +
     '<button type="button" class="q-draw-tbtn" data-action="eraser" title="橡皮擦">橡皮</button>' +
     '<button type="button" class="q-draw-tbtn danger" data-action="clear" title="清空">清空</button>' +
@@ -2076,15 +2076,15 @@ function finishDrawSession() {
   drawSession = null;
 }
 
-// 画笔粗细偏好：2~12px，持久化到 localStorage，题干与材料共用
+// 画笔粗细偏好：1~8px，持久化到 localStorage，题干与材料共用
 const DRAW_SIZE_PREF_KEY = "qdraw_size_pref";
-const DRAW_SIZE_MIN = 2, DRAW_SIZE_MAX = 12;
+const DRAW_SIZE_MIN = 1, DRAW_SIZE_MAX = 8;
 function getDrawSizePref() {
   try {
     const v = parseInt(localStorage.getItem(DRAW_SIZE_PREF_KEY), 10);
     if (v >= DRAW_SIZE_MIN && v <= DRAW_SIZE_MAX) return v;
   } catch (err) {}
-  return 4;
+  return 2;
 }
 function saveDrawSizePref(v) {
   try { localStorage.setItem(DRAW_SIZE_PREF_KEY, String(v)); } catch (err) {}
@@ -2094,7 +2094,7 @@ document.addEventListener("input", function (e) {
   const slider = e.target.closest(".q-draw-size");
   if (!slider || !drawSession) return;
   let v = parseInt(slider.value, 10);
-  if (!(v >= DRAW_SIZE_MIN && v <= DRAW_SIZE_MAX)) v = 4;
+  if (!(v >= DRAW_SIZE_MIN && v <= DRAW_SIZE_MAX)) v = 2;
   drawSession.size = v;
   saveDrawSizePref(v);
   const label = drawSession.toolbar.querySelector(".q-draw-size-label");
