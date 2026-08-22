@@ -211,8 +211,9 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
 .q-struct-table-wrap { margin: 10px 0; }
 /* 同材料多题聚合 */
 .question-group { border: 1px dashed var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; background: var(--bg2); }
-.question-group .group-material { margin-bottom: 4px; padding: 4px 2px 8px; }
-.question-group .group-material-title { font-size: 13px; font-weight: 600; color: var(--primary); margin: 0 0 4px; }
+.question-group .group-material { position: relative; margin-bottom: 4px; padding: 4px 2px 8px; }
+.question-group .group-material-title { font-size: 13px; font-weight: 600; color: var(--primary); margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+.mat-draw-btn { padding: 1px 10px; font-size: 12px; }
 .question-group .group-questions .question-card { box-shadow: none; border: 1px solid var(--border); margin-bottom: 12px; }
 .question-group .group-questions .question-card:last-child { margin-bottom: 0; }
 .q-options { margin-bottom: 10px; }
@@ -247,6 +248,8 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
 .q-draw-tbtn.active { background: var(--primary-soft); border-color: var(--primary); color: var(--primary); font-weight: 600; }
 .q-draw-tbtn.danger { color: var(--red); border-color: #f3c2c5; }
 .q-draw-tbtn.danger:hover { border-color: var(--red); color: var(--red); }
+.q-draw-size { width: 72px; accent-color: var(--primary); cursor: pointer; vertical-align: middle; }
+.q-draw-size-label { font-size: 11px; color: var(--muted); min-width: 26px; text-align: center; }
 .q-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
 .mastery-group { display: flex; gap: 6px; }
 .mastery-btn {
@@ -1159,9 +1162,11 @@ function renderGroup(g) {
   const anchor = allQuestions.find(function (q) { return q.material_group === g.material_group; }) || g.items[0].q;
   const parts = splitMaterialQuestion(anchor.question || "");
   const materialHtml = parts[0]
-    ? '<div class="group-material"><div class="group-material-title">【材料】</div><div class="q-text">' +
-      formatQuestionText(Object.assign({}, anchor, { question: parts[0] })) +
-      '</div></div>'
+    ? '<div class="group-material">' +
+      '<div class="group-material-title">【材料】<button type="button" class="btn btn-outline mat-draw-btn" data-material-group="' + esc(g.material_group) + '" title="在材料上手写圈画（仅手写笔触发）">圈画</button></div>' +
+      '<div class="q-text">' + formatQuestionText(Object.assign({}, anchor, { question: parts[0] })) + '</div>' +
+      matDrawLayerHtml(g.material_group) +
+      '</div>'
     : "";
   const cards = g.items.map(function (x) { return renderCard(x.q, x.idx, true); }).join("");
   return '<div class="question-group">' + materialHtml + '<div class="group-questions">' + cards + '</div></div>';
@@ -1596,16 +1601,33 @@ function renderCard(q, idx, inGroup) {
     '<div class="answer-panel">' + rows.join("") + '</div>' +
     '<div class="q-draw">' + drawImgHtml +
       '<canvas class="q-draw-canvas"></canvas>' +
-      '<div class="q-draw-toolbar">' +
-        '<button type="button" class="q-draw-tbtn active" data-action="color-red" title="红色画笔">红</button>' +
-        '<button type="button" class="q-draw-tbtn" data-action="color-black" title="黑色画笔">黑</button>' +
-        '<button type="button" class="q-draw-tbtn" data-action="size-thin" title="细笔">细</button>' +
-        '<button type="button" class="q-draw-tbtn active" data-action="size-bold" title="粗笔">粗</button>' +
-        '<button type="button" class="q-draw-tbtn" data-action="eraser" title="橡皮擦">橡皮</button>' +
-        '<button type="button" class="q-draw-tbtn danger" data-action="clear" title="清空">清空</button>' +
-        '<button type="button" class="q-draw-tbtn" data-action="done" title="完成">完成</button>' +
-      '</div>' +
+      '<div class="q-draw-toolbar">' + drawToolbarHtml() + '</div>' +
     '</div>' +
+  '</div>';
+}
+
+// 圈画工具栏 HTML（题干与材料共用；含画笔粗细滑块 2~12px）
+function drawToolbarHtml() {
+  return '<button type="button" class="q-draw-tbtn active" data-action="color-red" title="红色画笔">红</button>' +
+    '<button type="button" class="q-draw-tbtn" data-action="color-black" title="黑色画笔">黑</button>' +
+    '<input type="range" class="q-draw-size" min="2" max="12" step="1" value="' + getDrawSizePref() + '" title="画笔粗细">' +
+    '<span class="q-draw-size-label"></span>' +
+    '<button type="button" class="q-draw-tbtn" data-action="eraser" title="橡皮擦">橡皮</button>' +
+    '<button type="button" class="q-draw-tbtn danger" data-action="clear" title="清空">清空</button>' +
+    '<button type="button" class="q-draw-tbtn" data-action="done" title="完成">完成</button>';
+}
+
+// 材料组圈画层 HTML：按材料组维度独立存储（qdraw_mat_{material_group 编码}），组内所有题共用
+function matDrawLayerHtml(mg) {
+  const key = "qdraw_mat_" + encodeURIComponent(String(mg || ""));
+  let saved = null;
+  try { saved = localStorage.getItem(key) || null; } catch (err) { saved = null; }
+  const imgHtml = saved
+    ? '<img class="q-draw-img" src="' + saved + '" alt="">'
+    : '<img class="q-draw-img" alt="" style="display:none;">';
+  return '<div class="q-draw q-draw-mat">' + imgHtml +
+    '<canvas class="q-draw-canvas"></canvas>' +
+    '<div class="q-draw-toolbar">' + drawToolbarHtml() + '</div>' +
   '</div>';
 }
 
@@ -1910,6 +1932,11 @@ document.addEventListener("click", function (e) {
     openDrawMode(dwb);
     return;
   }
+  const mdwb = e.target.closest(".mat-draw-btn");
+  if (mdwb) {
+    openMatDrawMode(mdwb);
+    return;
+  }
   const scb = e.target.closest(".screenshot-btn");
   if (scb) {
     captureQuestionCard(scb.closest(".question-card"), scb);
@@ -1925,8 +1952,6 @@ document.addEventListener("click", function (e) {
     const action = tbtn.dataset.action;
     if (action === "color-red") drawSession.color = "#ef4444";
     else if (action === "color-black") drawSession.color = "#000000";
-    else if (action === "size-thin") drawSession.size = 2;
-    else if (action === "size-bold") drawSession.size = 4;
     else if (action === "eraser") drawSession.erasing = !drawSession.erasing;
     else if (action === "clear") drawSession.ctx.clearRect(0, 0, drawSession.canvas.width, drawSession.canvas.height);
     else if (action === "done") finishDrawSession();
@@ -1978,27 +2003,39 @@ function captureQuestionCard(card, btn) {
 }
 
 function openDrawMode(btn) {
-  finishDrawSession();
   const card = btn.closest(".question-card");
   if (!card) return;
-  const img = card.querySelector(".q-draw-img");
-  const canvas = card.querySelector(".q-draw-canvas");
-  const toolbar = card.querySelector(".q-draw-toolbar");
-  const w = card.clientWidth, h = card.clientHeight;
-  if (!w || !h) return;
+  openDrawSession(card, "qdraw_" + btn.dataset.id);
+}
+
+function openMatDrawMode(btn) {
+  const mat = btn.closest(".group-material");
+  if (!mat) return;
+  openDrawSession(mat, "qdraw_mat_" + encodeURIComponent(String(btn.dataset.materialGroup || "")));
+}
+
+// 通用圈画会话：题干卡片 / 材料容器（.group-material）共用；storageKey 决定存取维度
+function openDrawSession(container, storageKey) {
+  finishDrawSession();
+  if (!container) return;
+  const img = container.querySelector(".q-draw-img");
+  const canvas = container.querySelector(".q-draw-canvas");
+  const toolbar = container.querySelector(".q-draw-toolbar");
+  const w = container.clientWidth, h = container.clientHeight;
+  if (!w || !h || !canvas || !toolbar) return;
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext("2d");
   let saved = null;
-  try { saved = localStorage.getItem("qdraw_" + btn.dataset.id) || null; } catch (err) { saved = null; }
+  try { saved = localStorage.getItem(storageKey) || null; } catch (err) { saved = null; }
   if (saved) {
     const im = new Image();
     im.onload = function () { ctx.drawImage(im, 0, 0, w, h); };
     im.src = saved;
   }
   drawSession = {
-    id: btn.dataset.id, card: card, img: img, canvas: canvas, toolbar: toolbar, ctx: ctx,
-    color: "#ef4444", size: 4, erasing: false, drawing: false
+    id: null, storageKey: storageKey, card: container, img: img, canvas: canvas, toolbar: toolbar, ctx: ctx,
+    color: "#ef4444", size: getDrawSizePref(), erasing: false, drawing: false
   };
   img.style.display = "none";
   canvas.classList.add("active");
@@ -2011,8 +2048,10 @@ function setDrawToolbarState() {
   const tb = drawSession.toolbar;
   tb.querySelector('[data-action="color-red"]').classList.toggle("active", drawSession.color === "#ef4444");
   tb.querySelector('[data-action="color-black"]').classList.toggle("active", drawSession.color === "#000000");
-  tb.querySelector('[data-action="size-thin"]').classList.toggle("active", drawSession.size === 2);
-  tb.querySelector('[data-action="size-bold"]').classList.toggle("active", drawSession.size === 4);
+  const slider = tb.querySelector(".q-draw-size");
+  if (slider) slider.value = String(drawSession.size);
+  const label = tb.querySelector(".q-draw-size-label");
+  if (label) label.textContent = drawSession.size + "px";
   tb.querySelector('[data-action="eraser"]').classList.toggle("active", drawSession.erasing);
 }
 
@@ -2021,7 +2060,7 @@ function finishDrawSession() {
   const s = drawSession;
   try {
     const dataUrl = s.canvas.toDataURL("image/png");
-    localStorage.setItem("qdraw_" + s.id, dataUrl);
+    localStorage.setItem(s.storageKey, dataUrl);
     s.img.src = dataUrl;
     s.img.style.display = "";
   } catch (err) {
@@ -2032,9 +2071,35 @@ function finishDrawSession() {
   drawSession = null;
 }
 
+// 画笔粗细偏好：2~12px，持久化到 localStorage，题干与材料共用
+const DRAW_SIZE_PREF_KEY = "qdraw_size_pref";
+const DRAW_SIZE_MIN = 2, DRAW_SIZE_MAX = 12;
+function getDrawSizePref() {
+  try {
+    const v = parseInt(localStorage.getItem(DRAW_SIZE_PREF_KEY), 10);
+    if (v >= DRAW_SIZE_MIN && v <= DRAW_SIZE_MAX) return v;
+  } catch (err) {}
+  return 4;
+}
+function saveDrawSizePref(v) {
+  try { localStorage.setItem(DRAW_SIZE_PREF_KEY, String(v)); } catch (err) {}
+}
+// 滑块实时调节粗细
+document.addEventListener("input", function (e) {
+  const slider = e.target.closest(".q-draw-size");
+  if (!slider || !drawSession) return;
+  let v = parseInt(slider.value, 10);
+  if (!(v >= DRAW_SIZE_MIN && v <= DRAW_SIZE_MAX)) v = 4;
+  drawSession.size = v;
+  saveDrawSizePref(v);
+  const label = drawSession.toolbar.querySelector(".q-draw-size-label");
+  if (label) label.textContent = v + "px";
+});
+
 document.addEventListener("pointerdown", function (e) {
   const cv = e.target.closest(".q-draw-canvas");
   if (!cv || !drawSession || cv !== drawSession.canvas) return;
+  if (e.pointerType !== "pen") return; // 仅手写笔触发圈画（touch/mouse 均不绘制）
   e.preventDefault();
   const rect = cv.getBoundingClientRect();
   drawSession.drawing = true;
@@ -2047,6 +2112,7 @@ document.addEventListener("pointerdown", function (e) {
 
 document.addEventListener("pointermove", function (e) {
   if (!drawSession || !drawSession.drawing) return;
+  if (e.pointerType !== "pen") return; // 仅手写笔延续绘制
   e.preventDefault();
   const cv = drawSession.canvas;
   const rect = cv.getBoundingClientRect();
