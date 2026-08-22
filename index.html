@@ -201,6 +201,14 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
 .q-figure { margin: 10px 0; text-align: center; }
 .q-figure img.q-material-img { max-width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; }
 .q-para img.q-material-img { max-width: 100%; height: auto; vertical-align: middle; border-radius: 4px; }
+/* 数据驱动绘制的结构化材料（SVG 柱状图 / HTML 表格） */
+.q-chart-svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+.q-struct-table { border-collapse: collapse; margin: 4px auto; font-size: 13px; }
+.q-struct-table th, .q-struct-table td { border: 1px solid #000; padding: 5px 14px; text-align: center; white-space: nowrap; }
+.q-struct-table th { font-weight: 600; background: #fff; }
+.q-struct-table td:first-child { text-align: left; }
+.q-struct-table-title { font-size: 15px; font-weight: 600; margin: 8px 0 4px; text-align: center; }
+.q-struct-table-wrap { margin: 10px 0; }
 /* 同材料多题聚合 */
 .question-group { border: 1px dashed var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; background: var(--bg2); }
 .question-group .group-material { margin-bottom: 4px; padding: 4px 2px 8px; }
@@ -686,10 +694,125 @@ function splitTrailingQuestion(s) {
   return [s.trim(), ""];
 }
 
+// 材料内嵌结构化标记（数据驱动绘制）：![chart:{json}] 柱状图 / ![table:{json}] 表格
+// JSON 描述：type/title/unit/xAxis/yMin/yMax/yStep/series[{name,color,stroke,data}] 或 headers/rows
+const STRUCT_MARK_RE = /^!\[(chart|table):(\{.*\})\]$/;
+
+function structJsonEsc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+// 数据驱动 SVG 柱状图（对齐 PDF 原图：无主标题，左上角"单位：元"，图例右上竖排，
+// Y轴10000~50000每10000带小刻度线，无网格线，5年×3柱，柱顶黑色整数标签，X轴下方图标题）
+function renderBarChartSVG(spec) {
+  const W = 760, H = 420;
+  const padL = 70, padR = 24, padT = 64, padB = 70;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const cats = spec.xAxis || [];
+  const series = spec.series || [];
+  const yMin = spec.yMin, yMax = spec.yMax, yStep = spec.yStep;
+  const n = cats.length;
+  const groupW = plotW / n;
+  const inner = series.length;
+  const barW = Math.max(14, Math.min(30, groupW * 0.2));
+  const gap = barW * 0.25;
+  const total = inner * barW + (inner - 1) * gap;
+  const yScale = function (v) { return padT + plotH - (v - yMin) / (yMax - yMin) * plotH; };
+  let s = '';
+  s += '<svg class="q-chart-svg" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" font-family="SimSun,serif">';
+  // 坐标轴外框（左/右/上/下）
+  s += '<rect x="' + padL + '" y="' + padT + '" width="' + plotW + '" height="' + plotH + '" fill="none" stroke="#000" stroke-width="1"></rect>';
+  // 单位（左上角）
+  s += '<text x="' + padL + '" y="' + (padT - 24) + '" font-size="15" fill="#000">单位：' + structJsonEsc(spec.unit || "") + '</text>';
+  // 图例（右上角竖排）
+  const lgX = W - padR - 120, lgY = padT - 56;
+  series.forEach(function (ser, i) {
+    const y = lgY + i * 22;
+    s += '<rect x="' + lgX + '" y="' + y + '" width="15" height="15" fill="' + ser.color + '" stroke="#000" stroke-width="1"></rect>';
+    s += '<text x="' + (lgX + 22) + '" y="' + (y + 13) + '" font-size="14" fill="#000">' + structJsonEsc(ser.name) + '</text>';
+  });
+  // Y轴刻度（左竖线 + 小横线 + 数值）
+  for (let v = yMin; v <= yMax + 0.001; v += yStep) {
+    const y = yScale(v);
+    s += '<line x1="' + padL + '" y1="' + y + '" x2="' + (padL + 8) + '" y2="' + y + '" stroke="#000" stroke-width="1"></line>';
+    s += '<text x="' + (padL - 8) + '" y="' + (y + 5) + '" font-size="13" text-anchor="end" fill="#000">' + v + '</text>';
+  }
+  // X轴年份
+  cats.forEach(function (cat, ci) {
+    const cx = padL + ci * groupW + groupW / 2;
+    s += '<text x="' + cx + '" y="' + (H - padB + 26) + '" font-size="14" text-anchor="middle" fill="#000">' + structJsonEsc(cat) + '</text>';
+  });
+  // 柱体 + 数据标签
+  cats.forEach(function (cat, ci) {
+    const gx = padL + ci * groupW + (groupW - total) / 2;
+    series.forEach(function (ser, si) {
+      const v = ser.data[ci];
+      const bh = (v - yMin) / (yMax - yMin) * plotH;
+      const x = gx + si * (barW + gap);
+      const y = padT + plotH - bh;
+      s += '<rect x="' + x + '" y="' + y + '" width="' + barW + '" height="' + bh + '" fill="' + ser.color + '" stroke="#000" stroke-width="1"></rect>';
+      s += '<text x="' + (x + barW / 2) + '" y="' + (y - 6) + '" font-size="11" text-anchor="middle" fill="#000">' + v + '</text>';
+    });
+  });
+  // 图标题（X轴下方居中）
+  if (spec.title) {
+    s += '<text x="' + (padL + plotW / 2) + '" y="' + (H - 14) + '" font-size="15" text-anchor="middle" fill="#000">' + structJsonEsc(spec.title) + '</text>';
+  }
+  s += '</svg>';
+  return s;
+}
+
+// 数据驱动 HTML 表格（对齐 PDF 原表：指标列左对齐、数值居中、细黑线边框）
+function renderStructTableHTML(spec) {
+  let s = '<div class="q-struct-table-wrap">';
+  if (spec.title) s += '<div class="q-struct-table-title">' + structJsonEsc(spec.title) + '</div>';
+  s += '<table class="q-struct-table">';
+  const headers = spec.headers || [];
+  const rows = spec.rows || [];
+  // 表头多行（支持 rowspan/colspan）
+  headers.forEach(function (hrow) {
+    s += '<tr>';
+    hrow.forEach(function (h) {
+      const rs = h.rowspan ? ' rowspan="' + h.rowspan + '"' : '';
+      const cs = h.colspan ? ' colspan="' + h.colspan + '"' : '';
+      s += '<th' + rs + cs + '>' + structJsonEsc(h.text) + '</th>';
+    });
+    s += '</tr>';
+  });
+  rows.forEach(function (r) {
+    s += '<tr>';
+    r.forEach(function (c) { s += '<td>' + structJsonEsc(c) + '</td>'; });
+    s += '</tr>';
+  });
+  s += '</table></div>';
+  return s;
+}
+
 // 材料内嵌图片标记：![说明](data:image/png;base64,xxx)（与"question 以 data:image 开头=整题图片"约定并存）
 const IMG_MARK_RE = /!\[([^\]]*)\]\((data:image\/[^)]+)\)/;
 
+function renderStructuredMaterial(p) {
+  const m = p.match(STRUCT_MARK_RE);
+  if (!m) return "";
+  try {
+    const spec = JSON.parse(m[2]);
+    if (m[1] === "chart") return '<div class="q-figure">' + renderBarChartSVG(spec) + '</div>';
+    if (m[1] === "table") return '<div class="q-figure">' + renderStructTableHTML(spec) + '</div>';
+  } catch (e) {
+    // JSON 解析失败：原样返回文本，避免前端崩溃
+    return "";
+  }
+  return "";
+}
+
 function renderParaWithImages(p, wrap) {
+  // 整段仅为结构化标记（chart/table）→ 独立图容器（不缩进）
+  if (STRUCT_MARK_RE.test(p)) {
+    const h = renderStructuredMaterial(p);
+    if (h) return h;
+  }
   if (!IMG_MARK_RE.test(p)) {
     return '<div class="q-para">' + wrap(p) + '</div>';
   }
