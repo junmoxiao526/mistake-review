@@ -711,7 +711,7 @@ const MASTERY_KEY = "mistake_review_mastery_v1";
 const REVIEW_INTERVAL = [1, 2, 4, 7, 15, 30]; // stage 0~5 对应间隔（天）
 const PLAN_KEY = "ebbinghaus_plan_v1";
 const REVIEW_PLAN_VERSION = 1;
-let reviewPlanMap = {}; // id -> {first_reviewed_at, stage, next_review_date, wrong_count, completed}
+let reviewPlanMap = {}; // id -> {first_reviewed_at, stage, next_review_date, wrong_count}（无限循环，无结业）
 
 function reviewTodayStr() {
   const d = new Date();
@@ -743,18 +743,15 @@ function saveReviewPlan() {
 function getReviewPlan(id) {
   return reviewPlanMap[id] || null;
 }
-// 云端行 -> 本地计划对象（completed 由 stage>=6 推断）
+// 云端行 -> 本地计划对象（云端字段始终有效，无 completed 推断）
 function cloudToPlan(r) {
   if (!r || !r.id) return null;
   if (r.first_reviewed_at == null && r.stage == null && r.next_review_date == null && r.wrong_count == null) return null;
-  const stage = r.stage == null ? 0 : Number(r.stage);
-  const completed = stage >= REVIEW_INTERVAL.length;
   return {
     first_reviewed_at: r.first_reviewed_at || null,
-    stage: stage,
-    next_review_date: completed ? null : (r.next_review_date || null),
+    stage: r.stage == null ? 0 : Number(r.stage),
+    next_review_date: r.next_review_date || null,
     wrong_count: r.wrong_count == null ? 0 : Number(r.wrong_count),
-    completed: completed,
   };
 }
 // 本地计划 -> 云端字段值
@@ -762,7 +759,7 @@ function planToCloud(p) {
   return {
     first_reviewed_at: p.first_reviewed_at || null,
     stage: p.stage == null ? 0 : Number(p.stage),
-    next_review_date: p.completed ? null : (p.next_review_date || null),
+    next_review_date: p.next_review_date || null,
     wrong_count: p.wrong_count == null ? 0 : Number(p.wrong_count),
   };
 }
@@ -796,25 +793,25 @@ function mergeReviewPlansFromMastery(mRows) {
         stage: 0,
         next_review_date: reviewAddDays(base, 1),
         wrong_count: 0,
-        completed: false,
       };
     }
   });
   reviewPlanMap = merged;
   saveReviewPlan();
 }
-// 作答后更新复习计划：做对 stage+1（走完30天标记长期掌握）；做错重置；首次作答创建计划
+// 作答后更新复习计划（无限循环）：做对 stage+1，走完 30 天（stage=5 做对）重置回 stage 0 开始新一轮；
+// 做错重置回第 1 天；首次作答创建计划
 function onReviewAnswer(id, correct) {
   const today = reviewTodayStr();
   let p = reviewPlanMap[id];
   if (!p) {
-    p = { first_reviewed_at: today, stage: 0, next_review_date: reviewAddDays(today, 1), wrong_count: 0, completed: false };
+    p = { first_reviewed_at: today, stage: 0, next_review_date: reviewAddDays(today, 1), wrong_count: 0 };
   } else if (correct) {
     const ns = (Number(p.stage) || 0) + 1;
     if (ns >= REVIEW_INTERVAL.length) {
-      p.stage = REVIEW_INTERVAL.length;
-      p.completed = true;
-      p.next_review_date = null;
+      // 一轮六阶段走完：重置回 stage 0，明天开始新一轮第 1 天；wrong_count 保留累计
+      p.stage = 0;
+      p.next_review_date = reviewAddDays(today, 1);
     } else {
       p.stage = ns;
       p.next_review_date = reviewAddDays(today, REVIEW_INTERVAL[ns]);
@@ -823,7 +820,6 @@ function onReviewAnswer(id, correct) {
     p.stage = 0;
     p.next_review_date = reviewAddDays(today, 1);
     p.wrong_count = (Number(p.wrong_count) || 0) + 1;
-    p.completed = false;
   }
   reviewPlanMap[id] = p;
   saveReviewPlan();
@@ -831,7 +827,7 @@ function onReviewAnswer(id, correct) {
   updateReviewBanner();
 }
 function isReviewDue(p, today) {
-  if (!p || p.completed) return false;
+  if (!p) return false;
   return !!p.next_review_date && p.next_review_date <= today;
 }
 function dueReviewQuestions(today) {
