@@ -203,7 +203,7 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
   border-radius: 6px; text-align: justify; text-justify: inter-ideograph;
 }
 .q-option:hover { background: #f9fafb; }
-.q-option { cursor: pointer; user-select: none; transition: background .15s ease, color .15s ease; }
+.q-option { cursor: pointer; user-select: text; transition: background .15s ease, color .15s ease; }
 .q-option.selected { background: var(--primary-soft); }
 .q-option.correct { background: #e8f7ef; color: var(--green); font-weight: 600; }
 .q-option.wrong { background: #fdecec; color: var(--red); font-weight: 600; }
@@ -366,6 +366,33 @@ footer { text-align: center; color: #999999; font-size: 12px; padding: 20px 0; }
   color: #8A5A1B;
   margin-right: 6px;
 }
+/* 选中文本跳转搜索浮层 */
+.search-tip {
+  position: fixed;
+  z-index: 9998;
+  display: none;
+  background: #FFFDF7;
+  border: 1px solid #E7DCC2;
+  border-radius: 8px;
+  box-shadow: 0 8px 22px rgba(0,0,0,.15), 0 2px 6px rgba(0,0,0,.08);
+  padding: 5px;
+  font-size: 13px;
+  color: #463B2B;
+  white-space: nowrap;
+}
+.search-tip button {
+  border: none;
+  background: transparent;
+  color: #6B4E2B;
+  font-size: 13px;
+  line-height: 1;
+  padding: 8px 13px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.search-tip button:hover { background: rgba(138, 90, 27, .14); color: #8A5A1B; }
+.search-tip button + button { margin-left: 3px; }
 </style>
 </head>
 <body>
@@ -2100,6 +2127,83 @@ document.addEventListener("mouseout", function (e) {
   const rel = e.relatedTarget;
   if (rel && rel.closest && rel.closest(".dict-tip, .dict-word")) return;
   hideDictTip();
+});
+
+// 选中文本跳转搜索浮层（事件委托 + 全局监听，纯前端零依赖）
+const SEARCH_ENGINES = [
+  { label: "百度搜索", url: "https://www.baidu.com/s?wd=" },
+  { label: "必应搜索", url: "https://www.bing.com/search?q=" }
+];
+let _searchTip = null;
+let _searchTipSel = null;
+function getSearchTip() {
+  if (!_searchTip) {
+    _searchTip = document.createElement("div");
+    _searchTip.className = "search-tip";
+    _searchTip.setAttribute("role", "tooltip");
+    document.body.appendChild(_searchTip);
+    _searchTip.addEventListener("mousedown", function (e) {
+      e.preventDefault(); // 防止点击按钮时丢失文本选区
+    });
+    SEARCH_ENGINES.forEach(function (se) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = se.label;
+      btn.addEventListener("click", function () {
+        const word = _searchTipSel;
+        hideSearchTip();
+        if (word && word.trim()) {
+          window.open(se.url + encodeURIComponent(word.trim()), "_blank", "noopener");
+        }
+      });
+      _searchTip.appendChild(btn);
+    });
+  }
+  return _searchTip;
+}
+function hideSearchTip() {
+  if (_searchTip) _searchTip.style.display = "none";
+  _searchTipSel = null;
+}
+function isQuestionTextNode(node) {
+  return !!(node && node.closest && node.closest(".q-text, .q-option, .answer-panel"));
+}
+function showSearchTip(sel) {
+  const text = sel.toString().replace(/\s+/g, " ").trim();
+  if (!text) { hideSearchTip(); return; }
+  _searchTipSel = text;
+  const tip = getSearchTip();
+  tip.style.display = "block";
+  const r = sel.getRangeAt(0).getBoundingClientRect();
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  let left = r.left + r.width / 2 - tw / 2;
+  let top = r.bottom + 10;
+  if (left + tw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - tw - 8);
+  if (left < 8) left = 8;
+  if (top + th > window.innerHeight - 8) top = Math.max(8, r.top - th - 10);
+  tip.style.left = left + "px";
+  tip.style.top = top + "px";
+}
+document.addEventListener("mouseup", function (e) {
+  if (_searchTip && _searchTip.style.display === "block" && e.target && _searchTip.contains(e.target)) return;
+  const sel = window.getSelection && window.getSelection();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) { hideSearchTip(); return; }
+  const range = sel.getRangeAt(0);
+  const container = range.commonAncestorContainer;
+  const node = container.nodeType === 1 ? container : (container.parentNode || null);
+  if (!isQuestionTextNode(node)) { hideSearchTip(); return; }
+  hideDictTip(); // 出现文本选区时隐藏释义浮层，避免两个浮层叠放
+  showSearchTip(sel);
+});
+document.addEventListener("selectionchange", function () {
+  const sel = window.getSelection && window.getSelection();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) { hideSearchTip(); return; }
+});
+document.addEventListener("mousedown", function (e) {
+  if (_searchTip && _searchTip.style.display === "block") {
+    if (e.target === _searchTip || (_searchTip.contains && _searchTip.contains(e.target))) return;
+    hideSearchTip(); // 点击其他空白处时浮层消失
+  }
 });
 
 </script>
