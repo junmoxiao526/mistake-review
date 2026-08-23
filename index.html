@@ -2153,6 +2153,13 @@ let penHoverAt = 0;    // 最近一次 pen 悬停（hover）时间：笔靠近�
 let penContactInfoAvailable = false;
 const PEN_RESUME_WINDOW = 30000; // 抬笔后 30s 内再次落笔视为同一笔画，自动续接（覆盖较长停顿）
 const PEN_RESUME_FAR = 80;       // 续接时若新落点距断点超过 80px，视为另起一笔，从新落点开始（避免长直线）
+// iPad 设备判定：Apple Pencil 在 iPadOS 空档（抬笔再落笔）时不派发新 pointerdown/pointerup，
+// 只持续派发 pointermove 且 pressure/buttons/width/height 可能全为 0（WKWebView 限制），
+// 此时必须对 pen 类型 move 直接放行续接，否则断触；手指 touch 事件流完整不受影响。
+const IS_IPAD = (function () {
+  const ua = navigator.userAgent || "";
+  return /iPad/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
+})();
 
 // 笔事件判定：手写笔（pen）直接放行；
 // 笔被系统误报为 touch 时（部分 Windows/Edge 组合），用"有倾斜角 或 接触面积极小"识别为笔并放行；
@@ -2167,11 +2174,12 @@ function isPenLike(e) {
     // 双窗口兜底：近期有 pen 悬停/活动（笔被系统误报为 touch 时，先触发的 hover 仍是 pen 类型）
     const now = Date.now();
     if ((now - penHoverAt) < 3000 || (now - penActiveAt) < 2000) return true;
-    // iPad 特判：Apple Pencil 在 iPadOS 上可能被误报为 touch 且不提供 tilt/width/height（WKWebView 限制）。
-    // iPad Air 4 不支持 hover，悬停窗口无效，此处按设备放行"无面积信息"的触摸。
+    // iPad 特判：Apple Pencil 在 iPadOS 上可能被误报为 touch，且 WKWebView 接触面积报告不稳定
+    // （有时 0、有时 5~10px；手指在 iPad 上常不报面积=0，已被上面 smallTip/窗口之外放行）。
+    // 只要设备是 iPad 且接触面 ≤10px（笔尖特征，手指通常 10px+），一律按笔放行，避免空档断触。
     const ua = navigator.userAgent || "";
     const isIPad = /iPad/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
-    if (isIPad && w === 0 && h === 0) return true;
+    if (isIPad && w <= 10 && h <= 10) return true;
   }
   return false;
 }
@@ -2246,7 +2254,7 @@ document.addEventListener("pointermove", function (e) {
     // 1) withinWindow：抬笔 30s 窗口（覆盖 iPad+Edge 等 pressure/buttons 恒为 0 的设备）
     // 2) touching：pressure>0 或 buttons&1（设备正常上报接触时）
     // 3) smallTip：接触面很小（笔被误报为 touch 且压力为 0 时，靠面积识别）
-    const canResume = withinWindow || touching || smallTip;
+    const canResume = (IS_IPAD && e.pointerType === "pen") || withinWindow || touching || smallTip;
     if (!canResume) return;
     if (x < -60 || y < -60 || x > rect.width + 60 || y > rect.height + 60) return;
     // 续接开始绘制时同样锁定滚动链
