@@ -2166,6 +2166,10 @@ const IS_IPAD = (function () {
 // 手指（无 tilt、接触面积大）一律不参与，避免手指点击/滑动被误吞
 function isPenLike(e) {
   if (e.pointerType === "pen") return true;
+  // iPad 特判：WKWebView 中 Apple Pencil 事件流不完整（落笔不派发 pointerdown / 频繁 pointercancel），
+  // 且 touch/pen 的 width/height 常为 0 无法按面积区分；为保证笔能画，iPad 上 touch 一律放行。
+  // 手指误触由工具栏 closest 排除 + 滚动锁定兜底，不影响按钮与页面。
+  if (IS_IPAD && e.pointerType === "touch") return true;
   if (e.pointerType === "touch") {
     const tilt = Math.abs(e.tiltX || 0) + Math.abs(e.tiltY || 0);
     const w = e.width || 0, h = e.height || 0;
@@ -2254,7 +2258,9 @@ document.addEventListener("pointermove", function (e) {
     // 1) withinWindow：抬笔 30s 窗口（覆盖 iPad+Edge 等 pressure/buttons 恒为 0 的设备）
     // 2) touching：pressure>0 或 buttons&1（设备正常上报接触时）
     // 3) smallTip：接触面很小（笔被误报为 touch 且压力为 0 时，靠面积识别）
-    const canResume = (IS_IPAD && e.pointerType === "pen") || withinWindow || touching || smallTip;
+    // iPad 上 Apple Pencil 常被误报为 touch，且抬笔-落笔可能不重新派发 pointerdown（仅 pointermove 表达接触）；
+    // 因此 iPad 上 pen/touch 移动一律允许续接，不再依赖 penUpAt 窗口或 pointerType（坐标越界仍会被后续容错拦截）
+    const canResume = (IS_IPAD && (e.pointerType === "pen" || e.pointerType === "touch")) || withinWindow || touching || smallTip;
     if (!canResume) return;
     if (x < -60 || y < -60 || x > rect.width + 60 || y > rect.height + 60) return;
     // 续接开始绘制时同样锁定滚动链
