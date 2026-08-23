@@ -2134,14 +2134,34 @@ document.addEventListener("input", function (e) {
   if (label) label.textContent = v + "px";
 });
 
-// 最近一次抬笔时间戳：用于"提笔后短时间再次落笔（系统未派发新 pointerdown、只来 move）"的兜底续接
+// 最近一次抬笔/笔活动时间戳：用于"提笔后短时间再次落笔（系统未派发新 pointerdown、只来 move，或把笔误报为 touch）"的兜底续接
 let penUpAt = 0;
-const PEN_RESUME_WINDOW = 500; // 抬笔后 500ms 内再次落笔视为同一笔画，自动续接
+let penActiveAt = 0;   // 最近一次 pen/touch 活动时间，用于识别"笔被系统误报为 touch"
+let penHoverAt = 0;    // 最近一次 pen 悬停（hover）时间：笔靠近屏幕但未接触也会触发 pen 事件
+const PEN_RESUME_WINDOW = 2000; // 抬笔后 2s 内再次落笔视为同一笔画，自动续接
 const PEN_RESUME_FAR = 80;     // 续接时若新落点距断点超过 80px，视为另起一笔，从新落点开始（避免长直线）
+
+// 笔事件判定：pen 直接接受；圈画激活且最近有 pen 悬停/活动时，touch 也按笔处理（部分设备空档后把笔误报为 touch）
+function isPenLike(e) {
+  if (e.pointerType === "pen") return true;
+  if (e.pointerType === "touch") {
+    const now = Date.now();
+    if (now - penHoverAt < 3000 || now - penActiveAt < 2000) return true;
+  }
+  return false;
+}
+// 记录 pen 悬停状态（未接触屏幕的 hover 移动也会触发 pen 的 pointermove/pointerover）
+document.addEventListener("pointermove", function (e) {
+  if (e.pointerType === "pen") penHoverAt = Date.now();
+}, true);
+document.addEventListener("pointerover", function (e) {
+  if (e.pointerType === "pen") penHoverAt = Date.now();
+}, true);
 
 document.addEventListener("pointerdown", function (e) {
   if (!drawSession) return;
-  if (e.pointerType !== "pen") return; // 仅手写笔触发圈画（touch/mouse 均不绘制）
+  if (!isPenLike(e)) return; // 仅手写笔触发圈画（touch/mouse 均不绘制；笔被误报为 touch 时放行）
+  penActiveAt = Date.now();
   const cv = drawSession.canvas;
   // 容错：落点可能在工具栏/图片覆盖层等非 canvas 元素上，closest 会失败；
   // 只要落在卡片容器范围内，一律回退到 canvas 坐标继续落笔
@@ -2152,18 +2172,21 @@ document.addEventListener("pointerdown", function (e) {
   e.preventDefault();
   hideSearchTip();
   hideDictTip();
+  // 若上一笔的捕获未释放（快速提落时浏览器可能残留捕获，导致新 pointerdown 不派发），先释放再重新捕获
+  try { if (drawSession.lastPointerId != null) cv.releasePointerCapture(drawSession.lastPointerId); } catch (err) {}
   drawSession.drawing = true;
   drawSession.interrupted = false;
   drawSession.lastX = px - rect.left;
   drawSession.lastY = py - rect.top;
   drawSession.ctx.beginPath();
   drawSession.ctx.moveTo(drawSession.lastX, drawSession.lastY);
-  try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+  try { cv.setPointerCapture(e.pointerId); drawSession.lastPointerId = e.pointerId; } catch (err) { drawSession.lastPointerId = null; }
 });
 
 document.addEventListener("pointermove", function (e) {
   if (!drawSession) return;
-  if (e.pointerType !== "pen") return; // 仅手写笔延续绘制
+  if (!isPenLike(e)) return; // 仅手写笔延续绘制（笔被误报为 touch 时放行）
+  penActiveAt = Date.now();
   const cv = drawSession.canvas;
   const rect = cv.getBoundingClientRect();
   const x = e.clientX - rect.left, y = e.clientY - rect.top;
@@ -2171,7 +2194,7 @@ document.addEventListener("pointermove", function (e) {
   if (!drawSession.drawing) {
     // 两种情况允许续接：
     // 1. pointercancel 中断后（interrupted=true）：笔仍在画布附近移动，从断点无缝续画
-    // 2. 抬笔后 PEN_RESUME_WINDOW 内再次落笔（快速空档）：系统可能未派发新 pointerdown，只来 move，视为同一笔画续接
+    // 2. 抬笔后 PEN_RESUME_WINDOW 内再次落笔（空档）：系统可能未派发新 pointerdown，只来 move，视为同一笔画续接
     const quickResume = (Date.now() - penUpAt) <= PEN_RESUME_WINDOW;
     if (!drawSession.interrupted && !quickResume) return;
     if (x < -60 || y < -60 || x > rect.width + 60 || y > rect.height + 60) return;
@@ -2200,12 +2223,26 @@ document.addEventListener("pointermove", function (e) {
 
 document.addEventListener("pointerup", function () {
   penUpAt = Date.now();
-  if (drawSession) { drawSession.drawing = false; drawSession.interrupted = false; }
+  penActiveAt = Date.now();
+  if (drawSession) {
+    drawSession.drawing = false;
+    drawSession.interrupted = false;
+    // 主动释放捕获，避免捕获残留导致后续 pointerdown 丢失
+    try { if (drawSession.canvas && drawSession.lastPointerId != null) drawSession.canvas.releasePointerCapture(drawSession.lastPointerId); } catch (err) {}
+    drawSession.lastPointerId = null;
+  }
 });
 document.addEventListener("pointercancel", function () {
   // 不硬断：保留 lastX/lastY，标记中断，下一次 pen 移动自动续接，避免划线中断
   penUpAt = Date.now();
-  if (drawSession && drawSession.drawing) { drawSession.drawing = false; drawSession.interrupted = true; }
+  penActiveAt = Date.now();
+  if (drawSession && drawSession.drawing) {
+    drawSession.drawing = false;
+    drawSession.interrupted = true;
+    // 同样释放捕获，防止残留
+    try { if (drawSession.canvas && drawSession.lastPointerId != null) drawSession.canvas.releasePointerCapture(drawSession.lastPointerId); } catch (err) {}
+    drawSession.lastPointerId = null;
+  }
 });
 // 拍照上传错题
 const uploadModal = $("#uploadModal");
