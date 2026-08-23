@@ -2101,6 +2101,7 @@ function setDrawToolbarState() {
 
 function finishDrawSession() {
   if (!drawSession) return;
+  stylusStrokeActive = false; // 清理 stylus 兜底通道状态，防止残留
   const s = drawSession;
   try {
     const dataUrl = s.canvas.toDataURL("image/png");
@@ -2210,8 +2211,81 @@ document.addEventListener("pointerover", function (e) {
   if (e.pointerType === "pen") penHoverAt = Date.now();
 }, true);
 
+// ===== iPad stylus touch 兜底绘制通道 =====
+// 背景：iPad WKWebView 中 Apple Pencil 首次落笔常被系统手势识别抢占并派发 pointercancel，
+// 之后该 pointerId 不再派发任何事件，导致"第一遍写不出、第二遍才画出"。
+// touch(type='stylus') 事件流不受该系统手势抢占，可作为兜底通道。
+// 手指 touch(type='direct') 不启用本通道，仍走 pointer 通道（现有行为不变）。
+let stylusStrokeActive = false;
+document.addEventListener("touchstart", function (e) {
+  if (!drawSession || !IS_IPAD) return;
+  const t = e.changedTouches && e.changedTouches[0];
+  if (!t || t.type !== "stylus") return; // 仅 Apple Pencil；手指不启用本通道
+  if (e.target && e.target.closest && e.target.closest(".q-draw-toolbar")) return;
+  const cv = drawSession.canvas;
+  const rect = cv.getBoundingClientRect();
+  const px = t.clientX, py = t.clientY;
+  if (px < rect.left - 1 || px > rect.right + 1 || py < rect.top - 1 || py > rect.bottom + 1) return;
+  e.preventDefault(); // 同步阻止 WKWebView 把该触点识别为滚动手势
+  stylusStrokeActive = true;
+  if (!drawSession.scrollLock) drawSession.scrollLock = lockScrollChain(drawSession.card);
+  if (!drawSession.drawing) {
+    // pointerdown 已被吞（首笔被 cancel）时由这里开笔
+    drawSession.drawing = true;
+    drawSession.interrupted = false;
+    drawSession.lastX = px - rect.left;
+    drawSession.lastY = py - rect.top;
+    drawSession.ctx.beginPath();
+    drawSession.ctx.moveTo(drawSession.lastX, drawSession.lastY);
+  }
+}, true);
+
+document.addEventListener("touchmove", function (e) {
+  if (!drawSession || !IS_IPAD || !stylusStrokeActive) return;
+  const t = e.changedTouches && e.changedTouches[0];
+  if (!t) return;
+  e.preventDefault(); // 阻止滚动手势抢占 stylus 事件流
+  const cv = drawSession.canvas;
+  const rect = cv.getBoundingClientRect();
+  const x = t.clientX - rect.left, y = t.clientY - rect.top;
+  if (!drawSession.drawing) {
+    // pointer 通道被 cancel 后 touch 流继续移动：直接从断点续接
+    drawSession.drawing = true;
+    drawSession.interrupted = false;
+    drawSession.ctx.beginPath();
+    drawSession.ctx.moveTo(drawSession.lastX != null ? drawSession.lastX : x, drawSession.lastY != null ? drawSession.lastY : y);
+  }
+  drawSession.ctx.globalCompositeOperation = drawSession.erasing ? "destination-out" : "source-over";
+  drawSession.ctx.strokeStyle = drawSession.color;
+  drawSession.ctx.lineWidth = drawSession.size;
+  drawSession.ctx.lineCap = "round";
+  drawSession.ctx.lineJoin = "round";
+  drawSession.ctx.lineTo(x, y);
+  drawSession.ctx.stroke();
+  drawSession.lastX = x;
+  drawSession.lastY = y;
+}, true);
+
+document.addEventListener("touchend", function (e) {
+  if (!drawSession || !IS_IPAD || !stylusStrokeActive) return;
+  stylusStrokeActive = false;
+  if (drawSession.drawing) {
+    drawSession.drawing = false;
+    drawSession.interrupted = false;
+  }
+}, true);
+document.addEventListener("touchcancel", function (e) {
+  if (!drawSession || !IS_IPAD || !stylusStrokeActive) return;
+  stylusStrokeActive = false;
+  if (drawSession.drawing) {
+    drawSession.drawing = false;
+    drawSession.interrupted = true; // 保留坐标，后续移动可续接
+  }
+}, true);
+
 document.addEventListener("pointerdown", function (e) {
   if (!drawSession) return;
+  if (stylusStrokeActive) return; // stylus touch 通道已接管本笔画，避免双画
   // 工具栏按钮（颜色/粗细/橡皮/完成等）点击：不进入绘制，保证按钮可点
   if (e.target && e.target.closest && e.target.closest(".q-draw-toolbar")) return;
   if (!isPenLike(e)) return; // 仅手写笔触发圈画（touch/mouse 均不绘制；笔被误报为 touch 时放行）
@@ -2241,6 +2315,7 @@ document.addEventListener("pointerdown", function (e) {
 
 document.addEventListener("pointermove", function (e) {
   if (!drawSession) return;
+  if (stylusStrokeActive) return; // stylus touch 通道已接管本笔画，避免双画
   if (!isPenLike(e)) return; // 仅手写笔延续绘制（笔被误报为 touch 时按笔特征放行）
   if (e.pointerType === "pen" && (e.pressure > 0 || (e.buttons & 1) !== 0)) penContactInfoAvailable = true;
   penActiveAt = Date.now();
@@ -2290,6 +2365,7 @@ document.addEventListener("pointermove", function (e) {
 });
 
 document.addEventListener("pointerup", function () {
+  if (stylusStrokeActive) return; // 本笔画由 stylus touch 通道接管，pointerup 不干预
   penUpAt = Date.now();
   penActiveAt = Date.now();
   if (drawSession) {
@@ -2302,6 +2378,7 @@ document.addEventListener("pointerup", function () {
   }
 });
 document.addEventListener("pointercancel", function () {
+  if (stylusStrokeActive) return; // 本笔画由 stylus touch 通道接管，pointercancel 不干预
   // 不硬断：保留 lastX/lastY，标记中断，下一次 pen 移动自动续接，避免划线中断
   penUpAt = Date.now();
   penActiveAt = Date.now();
