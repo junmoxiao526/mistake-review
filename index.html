@@ -2155,6 +2155,7 @@ function isPenLike(e) {
   return false;
 }
 // 圈画激活期间：拦截文本选择开始 / 长按菜单 / 手势事件，防止系统浮层（拷贝/查询/翻译）弹出
+// 注意：不要全局拦截 touchstart，否则会连按钮点击和页面滚动一起禁掉
 document.addEventListener("selectstart", function (e) {
   if (drawSession) e.preventDefault();
 }, true);
@@ -2164,9 +2165,6 @@ document.addEventListener("contextmenu", function (e) {
 document.addEventListener("gesturestart", function (e) {
   if (drawSession) e.preventDefault();
 }, true);
-document.addEventListener("touchstart", function (e) {
-  if (drawSession) e.preventDefault();
-}, { passive: false, capture: true });
 // 记录 pen 悬停状态（未接触屏幕的 hover 移动也会触发 pen 的 pointermove/pointerover）
 document.addEventListener("pointermove", function (e) {
   if (e.pointerType === "pen") penHoverAt = Date.now();
