@@ -2145,14 +2145,10 @@ let penHoverAt = 0;    // 最近一次 pen 悬停（hover）时间：笔靠近�
 const PEN_RESUME_WINDOW = 2000; // 抬笔后 2s 内再次落笔视为同一笔画，自动续接
 const PEN_RESUME_FAR = 80;     // 续接时若新落点距断点超过 80px，视为另起一笔，从新落点开始（避免长直线）
 
-// 笔事件判定：pen 直接接受；圈画激活且最近有 pen 悬停/活动时，touch 也按笔处理（部分设备空档后把笔误报为 touch）
+// 笔事件判定：仅手写笔（pen）触发圈画；touch/mouse 一律不参与，避免手指点击/滑动被误吞
+// （空档断触已由 pressure>0 续接 + 释放捕获解决，无需再对 touch 开窗口）
 function isPenLike(e) {
-  if (e.pointerType === "pen") return true;
-  if (e.pointerType === "touch") {
-    const now = Date.now();
-    if (now - penHoverAt < 3000 || now - penActiveAt < 2000) return true;
-  }
-  return false;
+  return e.pointerType === "pen";
 }
 // 圈画激活期间：拦截文本选择开始 / 长按菜单 / 手势事件，防止系统浮层（拷贝/查询/翻译）弹出
 // 注意：不要全局拦截 touchstart，否则会连按钮点击和页面滚动一起禁掉
