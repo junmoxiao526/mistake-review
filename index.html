@@ -2240,7 +2240,7 @@ document.addEventListener("touchstart", function (e) {
     drawSession.ctx.beginPath();
     drawSession.ctx.moveTo(drawSession.lastX, drawSession.lastY);
   }
-}, true);
+}, { passive: false, capture: true }); // passive:false 必须显式指定，否则 WKWebView 忽略 preventDefault，滚动照样抢占 stylus 事件流
 
 document.addEventListener("touchmove", function (e) {
   if (!drawSession || !IS_IPAD) return;
@@ -2273,7 +2273,7 @@ document.addEventListener("touchmove", function (e) {
   drawSession.ctx.stroke();
   drawSession.lastX = x;
   drawSession.lastY = y;
-}, true);
+}, { passive: false, capture: true });
 
 document.addEventListener("touchend", function (e) {
   if (!drawSession || !IS_IPAD) return;
@@ -2283,7 +2283,7 @@ document.addEventListener("touchend", function (e) {
     drawSession.drawing = false;
     drawSession.interrupted = false;
   }
-}, true);
+}, { passive: false, capture: true });
 document.addEventListener("touchcancel", function (e) {
   if (!drawSession || !IS_IPAD) return;
   lastTouchUpAt = Date.now(); // 记录取消时刻，供空档续接判定
@@ -2292,7 +2292,7 @@ document.addEventListener("touchcancel", function (e) {
     drawSession.drawing = false;
     drawSession.interrupted = true; // 保留坐标，后续移动可续接
   }
-}, true);
+}, { passive: false, capture: true });
 
 document.addEventListener("pointerdown", function (e) {
   if (!drawSession) return;
