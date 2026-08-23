@@ -233,6 +233,8 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
 .q-draw-canvas.active { display: block; pointer-events: auto; }
 /* 圈画激活：容器及内部全部内容禁用文本选择，并禁浏览器手势抢占 */
 .q-draw-active, .q-draw-active * { user-select: none !important; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: none; overscroll-behavior: contain; -webkit-tap-highlight-color: transparent; }
+/* 圈画激活期间挂到 body 的全局防护：覆盖卡片外文本，阻止系统文本选择浮层（拷贝/查询/翻译） */
+body.q-draw-global, body.q-draw-global * { user-select: none !important; -webkit-user-select: none !important; -webkit-touch-callout: none !important; }
 .q-draw-toolbar {
   position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 12;
   display: none; align-items: center; gap: 6px; flex-wrap: nowrap;
@@ -2044,6 +2046,7 @@ function openDrawSession(container, storageKey) {
     im.src = saved;
   }
   container.classList.add("q-draw-active");
+  document.body.classList.add("q-draw-global"); // 全局禁止文本选择，防系统浮层
   drawSession = {
     id: null, storageKey: storageKey, card: container, img: img, canvas: canvas, toolbar: toolbar, ctx: ctx,
     color: "#ef4444", size: getDrawSizePref(), erasing: false, drawing: false, interrupted: false,
@@ -2105,6 +2108,7 @@ function finishDrawSession() {
   s.canvas.classList.remove("active");
   s.toolbar.classList.remove("open");
   if (s.card) s.card.classList.remove("q-draw-active");
+  document.body.classList.remove("q-draw-global"); // 恢复全局文本选择
   restoreScrollChain(s.scrollLock);
   drawSession = null;
 }
@@ -2150,6 +2154,19 @@ function isPenLike(e) {
   }
   return false;
 }
+// 圈画激活期间：拦截文本选择开始 / 长按菜单 / 手势事件，防止系统浮层（拷贝/查询/翻译）弹出
+document.addEventListener("selectstart", function (e) {
+  if (drawSession) e.preventDefault();
+}, true);
+document.addEventListener("contextmenu", function (e) {
+  if (drawSession) e.preventDefault();
+}, true);
+document.addEventListener("gesturestart", function (e) {
+  if (drawSession) e.preventDefault();
+}, true);
+document.addEventListener("touchstart", function (e) {
+  if (drawSession) e.preventDefault();
+}, { passive: false, capture: true });
 // 记录 pen 悬停状态（未接触屏幕的 hover 移动也会触发 pen 的 pointermove/pointerover）
 document.addEventListener("pointermove", function (e) {
   if (e.pointerType === "pen") penHoverAt = Date.now();
