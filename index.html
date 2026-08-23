@@ -2192,16 +2192,16 @@ document.addEventListener("pointermove", function (e) {
   const x = e.clientX - rect.left, y = e.clientY - rect.top;
   const ctx = drawSession.ctx;
   if (!drawSession.drawing) {
-    // 两种情况允许续接：
-    // 1. pointercancel 中断后（interrupted=true）：笔仍在画布附近移动，从断点无缝续画
-    // 2. 抬笔后 PEN_RESUME_WINDOW 内再次落笔（空档）：系统可能未派发新 pointerdown，只来 move，视为同一笔画续接
-    const quickResume = (Date.now() - penUpAt) <= PEN_RESUME_WINDOW;
-    if (!drawSession.interrupted && !quickResume) return;
+    // 笔正在接触屏幕（pressure>0 / 按键按下）才允许恢复绘制；悬停（pressure=0）不画
+    const isTouching = e.pressure > 0 || (e.buttons & 1) !== 0;
+    if (!isTouching) return;
     if (x < -60 || y < -60 || x > rect.width + 60 || y > rect.height + 60) return;
     drawSession.drawing = true;
     drawSession.interrupted = false;
-    // 新落点距上次断点较远时，另起一笔（从新落点开始），避免画出长直线
-    if (!quickResume || (Math.abs(x - drawSession.lastX) + Math.abs(y - drawSession.lastY)) <= PEN_RESUME_FAR) {
+    // 距断点近且发生在抬笔窗口内 → 从断点无缝续画；否则视为新一笔从落点开始
+    const dist = Math.abs(x - drawSession.lastX) + Math.abs(y - drawSession.lastY);
+    const withinWindow = (Date.now() - penUpAt) <= PEN_RESUME_WINDOW;
+    if (withinWindow && dist <= PEN_RESUME_FAR) {
       ctx.beginPath();
       ctx.moveTo(drawSession.lastX, drawSession.lastY);
     } else {
