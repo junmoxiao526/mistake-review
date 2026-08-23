@@ -2142,14 +2142,29 @@ document.addEventListener("input", function (e) {
 let penUpAt = 0;
 let penActiveAt = 0;   // 最近一次 pen/touch 活动时间，用于识别"笔被系统误报为 touch"
 let penHoverAt = 0;    // 最近一次 pen 悬停（hover）时间：笔靠近屏幕但未接触也会触发 pen 事件
-const PEN_RESUME_WINDOW = 2000; // 抬笔后 2s 内再次落笔视为同一笔画，自动续接
-const PEN_RESUME_FAR = 80;     // 续接时若新落点距断点超过 80px，视为另起一笔，从新落点开始（避免长直线）
+// 设备是否报告接触信息（pressure/buttons）：正常 pen 落笔时 pressure>0 或 buttons=1；
+// 部分设备/浏览器组合不报告，此时靠"抬笔窗口"兜底续接，避免空档断触
+let penContactInfoAvailable = false;
+const PEN_RESUME_WINDOW = 10000; // 抬笔后 10s 内再次落笔视为同一笔画，自动续接（覆盖较长停顿）
+const PEN_RESUME_FAR = 80;       // 续接时若新落点距断点超过 80px，视为另起一笔，从新落点开始（避免长直线）
 
-// 笔事件判定：仅手写笔（pen）触发圈画；touch/mouse 一律不参与，避免手指点击/滑动被误吞
-// （空档断触已由 pressure>0 续接 + 释放捕获解决，无需再对 touch 开窗口）
+// 笔事件判定：手写笔（pen）直接放行；
+// 笔被系统误报为 touch 时（部分 Windows/Edge 组合），用"有倾斜角 或 接触面积极小"识别为笔并放行；
+// 手指（无 tilt、接触面积大）一律不参与，避免手指点击/滑动被误吞
 function isPenLike(e) {
-  return e.pointerType === "pen";
+  if (e.pointerType === "pen") return true;
+  if (e.pointerType === "touch") {
+    const tilt = Math.abs(e.tiltX || 0) + Math.abs(e.tiltY || 0);
+    const w = e.width || 0, h = e.height || 0;
+    const smallTip = w > 0 && h > 0 && w <= 4 && h <= 4; // 笔尖接触面 ≤4px，手指通常 10px+
+    if (tilt > 0 || smallTip) return true;
+  }
+  return false;
 }
+// 记录设备是否上报接触信息：只要任意 pen 事件带 pressure>0 或 buttons 按下，即认为可依赖接触判定
+document.addEventListener("pointerdown", function (e) {
+  if (e.pointerType === "pen" && (e.pressure > 0 || (e.buttons & 1) !== 0)) penContactInfoAvailable = true;
+}, true);
 // 圈画激活期间：拦截文本选择开始 / 长按菜单 / 手势事件，防止系统浮层（拷贝/查询/翻译）弹出
 // 注意：不要全局拦截 touchstart，否则会连按钮点击和页面滚动一起禁掉
 document.addEventListener("selectstart", function (e) {
@@ -2200,16 +2215,21 @@ document.addEventListener("pointerdown", function (e) {
 
 document.addEventListener("pointermove", function (e) {
   if (!drawSession) return;
-  if (!isPenLike(e)) return; // 仅手写笔延续绘制（笔被误报为 touch 时放行）
+  if (!isPenLike(e)) return; // 仅手写笔延续绘制（笔被误报为 touch 时按笔特征放行）
+  if (e.pointerType === "pen" && (e.pressure > 0 || (e.buttons & 1) !== 0)) penContactInfoAvailable = true;
   penActiveAt = Date.now();
   const cv = drawSession.canvas;
   const rect = cv.getBoundingClientRect();
   const x = e.clientX - rect.left, y = e.clientY - rect.top;
   const ctx = drawSession.ctx;
   if (!drawSession.drawing) {
-    // 笔正在接触屏幕（pressure>0 / 按键按下）才允许恢复绘制；悬停（pressure=0）不画
-    const isTouching = e.pressure > 0 || (e.buttons & 1) !== 0;
-    if (!isTouching) return;
+    // 接触判定：pressure>0 / 按键按下 / 笔尖小触点（≤4px）视为接触中，可恢复绘制；
+    // 若设备从不报告接触信息（penContactInfoAvailable=false），用抬笔窗口兜底：窗口内的 pen 移动一律续接，避免空档断触
+    const touching = e.pressure > 0 || (e.buttons & 1) !== 0;
+    const smallTip = (e.width || 0) > 0 && (e.width || 0) <= 4 && (e.height || 0) > 0 && (e.height || 0) <= 4;
+    const withinWindow = (Date.now() - penUpAt) <= PEN_RESUME_WINDOW;
+    const canResume = penContactInfoAvailable ? (touching || smallTip) : withinWindow;
+    if (!canResume) return;
     if (x < -60 || y < -60 || x > rect.width + 60 || y > rect.height + 60) return;
     // 续接开始绘制时同样锁定滚动链
     if (!drawSession.scrollLock) drawSession.scrollLock = lockScrollChain(drawSession.card);
@@ -2217,7 +2237,6 @@ document.addEventListener("pointermove", function (e) {
     drawSession.interrupted = false;
     // 距断点近且发生在抬笔窗口内 → 从断点无缝续画；否则视为新一笔从落点开始
     const dist = Math.abs(x - drawSession.lastX) + Math.abs(y - drawSession.lastY);
-    const withinWindow = (Date.now() - penUpAt) <= PEN_RESUME_WINDOW;
     if (withinWindow && dist <= PEN_RESUME_FAR) {
       ctx.beginPath();
       ctx.moveTo(drawSession.lastX, drawSession.lastY);
