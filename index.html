@@ -2134,6 +2134,11 @@ document.addEventListener("input", function (e) {
   if (label) label.textContent = v + "px";
 });
 
+// 最近一次抬笔时间戳：用于"提笔后短时间再次落笔（系统未派发新 pointerdown、只来 move）"的兜底续接
+let penUpAt = 0;
+const PEN_RESUME_WINDOW = 500; // 抬笔后 500ms 内再次落笔视为同一笔画，自动续接
+const PEN_RESUME_FAR = 80;     // 续接时若新落点距断点超过 80px，视为另起一笔，从新落点开始（避免长直线）
+
 document.addEventListener("pointerdown", function (e) {
   if (!drawSession) return;
   if (e.pointerType !== "pen") return; // 仅手写笔触发圈画（touch/mouse 均不绘制）
@@ -2164,12 +2169,22 @@ document.addEventListener("pointermove", function (e) {
   const x = e.clientX - rect.left, y = e.clientY - rect.top;
   const ctx = drawSession.ctx;
   if (!drawSession.drawing) {
-    // pointercancel 中断后自动续接：笔仍在画布附近移动时，从上次断点无缝续画
-    if (!drawSession.interrupted) return;
+    // 两种情况允许续接：
+    // 1. pointercancel 中断后（interrupted=true）：笔仍在画布附近移动，从断点无缝续画
+    // 2. 抬笔后 PEN_RESUME_WINDOW 内再次落笔（快速空档）：系统可能未派发新 pointerdown，只来 move，视为同一笔画续接
+    const quickResume = (Date.now() - penUpAt) <= PEN_RESUME_WINDOW;
+    if (!drawSession.interrupted && !quickResume) return;
     if (x < -60 || y < -60 || x > rect.width + 60 || y > rect.height + 60) return;
     drawSession.drawing = true;
-    ctx.beginPath();
-    ctx.moveTo(drawSession.lastX, drawSession.lastY);
+    drawSession.interrupted = false;
+    // 新落点距上次断点较远时，另起一笔（从新落点开始），避免画出长直线
+    if (!quickResume || (Math.abs(x - drawSession.lastX) + Math.abs(y - drawSession.lastY)) <= PEN_RESUME_FAR) {
+      ctx.beginPath();
+      ctx.moveTo(drawSession.lastX, drawSession.lastY);
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+    }
   }
   e.preventDefault();
   ctx.globalCompositeOperation = drawSession.erasing ? "destination-out" : "source-over";
@@ -2184,10 +2199,12 @@ document.addEventListener("pointermove", function (e) {
 });
 
 document.addEventListener("pointerup", function () {
+  penUpAt = Date.now();
   if (drawSession) { drawSession.drawing = false; drawSession.interrupted = false; }
 });
 document.addEventListener("pointercancel", function () {
   // 不硬断：保留 lastX/lastY，标记中断，下一次 pen 移动自动续接，避免划线中断
+  penUpAt = Date.now();
   if (drawSession && drawSession.drawing) { drawSession.drawing = false; drawSession.interrupted = true; }
 });
 // 拍照上传错题
