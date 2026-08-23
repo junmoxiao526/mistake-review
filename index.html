@@ -2218,6 +2218,7 @@ document.addEventListener("pointerover", function (e) {
 // 注意：WKWebView 的 Touch.type 可能为 undefined（Safari 对 stylus/direct 区分支持不完整），
 // 因此 iPad 上不依赖 type 判断，所有触点统一启用本通道（用户确认只用笔、不用手指书写）。
 let stylusStrokeActive = false;
+let lastTouchUpAt = 0; // 最近一次 touch 抬笔/取消时间，用于空档续接
 document.addEventListener("touchstart", function (e) {
   if (!drawSession || !IS_IPAD) return;
   const t = e.changedTouches && e.changedTouches[0];
@@ -2242,15 +2243,22 @@ document.addEventListener("touchstart", function (e) {
 }, true);
 
 document.addEventListener("touchmove", function (e) {
-  if (!drawSession || !IS_IPAD || !stylusStrokeActive) return;
+  if (!drawSession || !IS_IPAD) return;
   const t = e.changedTouches && e.changedTouches[0];
   if (!t) return;
-  e.preventDefault(); // 阻止滚动手势抢占 stylus 事件流
   const cv = drawSession.canvas;
   const rect = cv.getBoundingClientRect();
   const x = t.clientX - rect.left, y = t.clientY - rect.top;
+  if (x < -60 || y < -60 || x > rect.width + 60 || y > rect.height + 60) return;
+  if (!stylusStrokeActive) {
+    // 抬笔再落笔：WKWebView 中 Apple Pencil 可能不重新派发 touchstart，只续发 touchmove；
+    // 只要在抬笔续接窗口内，自动视为新一笔续画，避免空档断触
+    if ((Date.now() - lastTouchUpAt) > PEN_RESUME_WINDOW) return;
+    stylusStrokeActive = true;
+    if (!drawSession.scrollLock) drawSession.scrollLock = lockScrollChain(drawSession.card);
+  }
+  e.preventDefault(); // 阻止滚动手势抢占 touch 事件流
   if (!drawSession.drawing) {
-    // pointer 通道被 cancel 后 touch 流继续移动：直接从断点续接
     drawSession.drawing = true;
     drawSession.interrupted = false;
     drawSession.ctx.beginPath();
@@ -2268,7 +2276,8 @@ document.addEventListener("touchmove", function (e) {
 }, true);
 
 document.addEventListener("touchend", function (e) {
-  if (!drawSession || !IS_IPAD || !stylusStrokeActive) return;
+  if (!drawSession || !IS_IPAD) return;
+  lastTouchUpAt = Date.now(); // 记录抬笔时刻，供空档续接判定
   stylusStrokeActive = false;
   if (drawSession.drawing) {
     drawSession.drawing = false;
@@ -2276,7 +2285,8 @@ document.addEventListener("touchend", function (e) {
   }
 }, true);
 document.addEventListener("touchcancel", function (e) {
-  if (!drawSession || !IS_IPAD || !stylusStrokeActive) return;
+  if (!drawSession || !IS_IPAD) return;
+  lastTouchUpAt = Date.now(); // 记录取消时刻，供空档续接判定
   stylusStrokeActive = false;
   if (drawSession.drawing) {
     drawSession.drawing = false;
