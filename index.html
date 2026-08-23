@@ -2214,13 +2214,14 @@ document.addEventListener("pointerover", function (e) {
 // ===== iPad stylus touch 兜底绘制通道 =====
 // 背景：iPad WKWebView 中 Apple Pencil 首次落笔常被系统手势识别抢占并派发 pointercancel，
 // 之后该 pointerId 不再派发任何事件，导致"第一遍写不出、第二遍才画出"。
-// touch(type='stylus') 事件流不受该系统手势抢占，可作为兜底通道。
-// 手指 touch(type='direct') 不启用本通道，仍走 pointer 通道（现有行为不变）。
+// touch 事件流不受该系统手势抢占，可作为兜底通道。
+// 注意：WKWebView 的 Touch.type 可能为 undefined（Safari 对 stylus/direct 区分支持不完整），
+// 因此 iPad 上不依赖 type 判断，所有触点统一启用本通道（用户确认只用笔、不用手指书写）。
 let stylusStrokeActive = false;
 document.addEventListener("touchstart", function (e) {
   if (!drawSession || !IS_IPAD) return;
   const t = e.changedTouches && e.changedTouches[0];
-  if (!t || t.type !== "stylus") return; // 仅 Apple Pencil；手指不启用本通道
+  if (!t) return; // iPad 上统一启用 touch 兜底通道（含 Apple Pencil 与手指）
   if (e.target && e.target.closest && e.target.closest(".q-draw-toolbar")) return;
   const cv = drawSession.canvas;
   const rect = cv.getBoundingClientRect();
