@@ -2035,9 +2035,13 @@ function openDrawSession(container, storageKey) {
   const toolbar = container.querySelector(".q-draw-toolbar");
   const w = container.clientWidth, h = container.clientHeight;
   if (!w || !h || !canvas || !toolbar) return;
-  canvas.width = w;
-  canvas.height = h;
+  // 高分屏适配：物理像素按 devicePixelRatio 放大，绘制坐标仍用 CSS 像素（setTransform 缩放），
+  // 否则 iPad/Retina 上画布只有一半物理像素，笔迹被拉伸放大必然发虚、看不清
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
   const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   let saved = null;
   try { saved = localStorage.getItem(storageKey) || null; } catch (err) { saved = null; }
   if (saved) {
@@ -2127,7 +2131,7 @@ function getDrawSizePref() {
     const v = parseInt(localStorage.getItem(DRAW_SIZE_PREF_KEY), 10);
     if (v >= DRAW_SIZE_MIN && v <= DRAW_SIZE_MAX) return v;
   } catch (err) {}
-  return 2;
+  return 3; // 圆珠笔默认笔宽：3px，配合高分屏适配更圆润饱满
 }
 function saveDrawSizePref(v) {
   try { localStorage.setItem(DRAW_SIZE_PREF_KEY, String(v)); } catch (err) {}
@@ -2137,7 +2141,7 @@ document.addEventListener("input", function (e) {
   const slider = e.target.closest(".q-draw-size");
   if (!slider || !drawSession) return;
   let v = parseInt(slider.value, 10);
-  if (!(v >= DRAW_SIZE_MIN && v <= DRAW_SIZE_MAX)) v = 2;
+  if (!(v >= DRAW_SIZE_MIN && v <= DRAW_SIZE_MAX)) v = 3;
   drawSession.size = v;
   saveDrawSizePref(v);
   const label = drawSession.toolbar.querySelector(".q-draw-size-label");
@@ -2239,6 +2243,14 @@ document.addEventListener("touchstart", function (e) {
     drawSession.lastY = py - rect.top;
     drawSession.ctx.beginPath();
     drawSession.ctx.moveTo(drawSession.lastX, drawSession.lastY);
+    // 圆珠笔笔迹：落笔处补实心圆点，起笔圆润饱满（纯点按也有痕迹；iPad touch 兜底通道同样生效）
+    drawSession.ctx.globalCompositeOperation = drawSession.erasing ? "destination-out" : "source-over";
+    drawSession.ctx.fillStyle = drawSession.color;
+    drawSession.ctx.beginPath();
+    drawSession.ctx.arc(drawSession.lastX, drawSession.lastY, drawSession.size / 2, 0, Math.PI * 2);
+    drawSession.ctx.fill();
+    drawSession.ctx.beginPath();
+    drawSession.ctx.moveTo(drawSession.lastX, drawSession.lastY);
   }
 }, { passive: false, capture: true }); // passive:false 必须显式指定，否则 WKWebView 忽略 preventDefault，滚动照样抢占 stylus 事件流
 
@@ -2319,6 +2331,14 @@ document.addEventListener("pointerdown", function (e) {
   drawSession.interrupted = false;
   drawSession.lastX = px - rect.left;
   drawSession.lastY = py - rect.top;
+  drawSession.ctx.beginPath();
+  drawSession.ctx.moveTo(drawSession.lastX, drawSession.lastY);
+  // 圆珠笔笔迹：落笔处补实心圆点，起笔圆润饱满（纯点按也有痕迹）
+  drawSession.ctx.globalCompositeOperation = drawSession.erasing ? "destination-out" : "source-over";
+  drawSession.ctx.fillStyle = drawSession.color;
+  drawSession.ctx.beginPath();
+  drawSession.ctx.arc(drawSession.lastX, drawSession.lastY, drawSession.size / 2, 0, Math.PI * 2);
+  drawSession.ctx.fill();
   drawSession.ctx.beginPath();
   drawSession.ctx.moveTo(drawSession.lastX, drawSession.lastY);
   try { cv.setPointerCapture(e.pointerId); drawSession.lastPointerId = e.pointerId; } catch (err) { drawSession.lastPointerId = null; }
