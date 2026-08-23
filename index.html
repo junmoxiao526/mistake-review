@@ -232,8 +232,7 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
 .q-draw-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: none; pointer-events: none; cursor: crosshair; touch-action: none; }
 .q-draw-canvas.active { display: block; pointer-events: auto; }
 /* 圈画激活：容器及内部全部内容禁用文本选择，并禁浏览器手势抢占 */
-.q-draw-active, .q-draw-active * { user-select: none !important; -webkit-user-select: none; -webkit-touch-callout: none; }
-.q-draw-active { touch-action: none; }
+.q-draw-active, .q-draw-active * { user-select: none !important; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: none; overscroll-behavior: contain; -webkit-tap-highlight-color: transparent; }
 .q-draw-toolbar {
   position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 12;
   display: none; align-items: center; gap: 6px; flex-wrap: nowrap;
@@ -2047,12 +2046,37 @@ function openDrawSession(container, storageKey) {
   container.classList.add("q-draw-active");
   drawSession = {
     id: null, storageKey: storageKey, card: container, img: img, canvas: canvas, toolbar: toolbar, ctx: ctx,
-    color: "#ef4444", size: getDrawSizePref(), erasing: false, drawing: false
+    color: "#ef4444", size: getDrawSizePref(), erasing: false, drawing: false, interrupted: false,
+    scrollLock: lockScrollChain(container)
   };
   img.style.display = "none";
   canvas.classList.add("active");
   toolbar.classList.add("open");
   setDrawToolbarState();
+}
+
+// 圈画激活期间锁定祖先滚动链（overflow 容器临时 touch-action:none），
+// 防止系统手势抢占滚动导致 pointercancel；finish 时恢复原值
+function lockScrollChain(container) {
+  const saved = [];
+  let el = container.parentElement;
+  while (el && el !== document.body && el !== document.documentElement) {
+    let cs = null;
+    try { cs = getComputedStyle(el); } catch (err) {}
+    if (cs) {
+      const o = (cs.overflowY + " " + cs.overflowX).toLowerCase();
+      if (o.indexOf("auto") >= 0 || o.indexOf("scroll") >= 0) {
+        saved.push({ el: el, val: el.style.touchAction });
+        el.style.touchAction = "none";
+      }
+    }
+    el = el.parentElement;
+  }
+  return saved;
+}
+function restoreScrollChain(saved) {
+  if (!saved) return;
+  saved.forEach(function (it) { it.el.style.touchAction = it.val; });
 }
 
 function setDrawToolbarState() {
@@ -2081,6 +2105,7 @@ function finishDrawSession() {
   s.canvas.classList.remove("active");
   s.toolbar.classList.remove("open");
   if (s.card) s.card.classList.remove("q-draw-active");
+  restoreScrollChain(s.scrollLock);
   drawSession = null;
 }
 
@@ -2110,29 +2135,43 @@ document.addEventListener("input", function (e) {
 });
 
 document.addEventListener("pointerdown", function (e) {
-  const cv = e.target.closest(".q-draw-canvas");
-  if (!cv || !drawSession || cv !== drawSession.canvas) return;
+  if (!drawSession) return;
   if (e.pointerType !== "pen") return; // 仅手写笔触发圈画（touch/mouse 均不绘制）
+  const cv = drawSession.canvas;
+  // 容错：落点可能在工具栏/图片覆盖层等非 canvas 元素上，closest 会失败；
+  // 只要落在卡片容器范围内，一律回退到 canvas 坐标继续落笔
+  const rect = cv.getBoundingClientRect();
+  const px = e.clientX, py = e.clientY;
+  const inCard = px >= rect.left - 1 && px <= rect.right + 1 && py >= rect.top - 1 && py <= rect.bottom + 1;
+  if (!inCard) return;
   e.preventDefault();
   hideSearchTip();
   hideDictTip();
-  const rect = cv.getBoundingClientRect();
   drawSession.drawing = true;
-  drawSession.lastX = e.clientX - rect.left;
-  drawSession.lastY = e.clientY - rect.top;
+  drawSession.interrupted = false;
+  drawSession.lastX = px - rect.left;
+  drawSession.lastY = py - rect.top;
   drawSession.ctx.beginPath();
   drawSession.ctx.moveTo(drawSession.lastX, drawSession.lastY);
   try { cv.setPointerCapture(e.pointerId); } catch (err) {}
 });
 
 document.addEventListener("pointermove", function (e) {
-  if (!drawSession || !drawSession.drawing) return;
+  if (!drawSession) return;
   if (e.pointerType !== "pen") return; // 仅手写笔延续绘制
-  e.preventDefault();
   const cv = drawSession.canvas;
   const rect = cv.getBoundingClientRect();
   const x = e.clientX - rect.left, y = e.clientY - rect.top;
   const ctx = drawSession.ctx;
+  if (!drawSession.drawing) {
+    // pointercancel 中断后自动续接：笔仍在画布附近移动时，从上次断点无缝续画
+    if (!drawSession.interrupted) return;
+    if (x < -60 || y < -60 || x > rect.width + 60 || y > rect.height + 60) return;
+    drawSession.drawing = true;
+    ctx.beginPath();
+    ctx.moveTo(drawSession.lastX, drawSession.lastY);
+  }
+  e.preventDefault();
   ctx.globalCompositeOperation = drawSession.erasing ? "destination-out" : "source-over";
   ctx.strokeStyle = drawSession.color;
   ctx.lineWidth = drawSession.size;
@@ -2145,10 +2184,11 @@ document.addEventListener("pointermove", function (e) {
 });
 
 document.addEventListener("pointerup", function () {
-  if (drawSession) drawSession.drawing = false;
+  if (drawSession) { drawSession.drawing = false; drawSession.interrupted = false; }
 });
 document.addEventListener("pointercancel", function () {
-  if (drawSession) drawSession.drawing = false;
+  // 不硬断：保留 lastX/lastY，标记中断，下一次 pen 移动自动续接，避免划线中断
+  if (drawSession && drawSession.drawing) { drawSession.drawing = false; drawSession.interrupted = true; }
 });
 // 拍照上传错题
 const uploadModal = $("#uploadModal");
