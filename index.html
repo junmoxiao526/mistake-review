@@ -2148,6 +2148,50 @@ document.addEventListener("input", function (e) {
   if (label) label.textContent = v + "px";
 });
 
+// 圈画激活期间：滑块拖动手动接管
+// 背景：lockScrollChain 激活即锁把容器 touch-action 设为 none，iPad 上原生 range 滑块拖动被浏览器禁用；
+// 且全局 touchmove preventDefault 也会杀掉滑块拖动。这里检测触摸落在滑块区域时，
+// 手动按触摸坐标换算笔宽并 preventDefault，绕开原生拖动限制。
+let sliderDragTouch = false;
+function drawSliderByClientX(clientX) {
+  if (!drawSession) return;
+  const slider = drawSession.toolbar && drawSession.toolbar.querySelector(".q-draw-size");
+  if (!slider) return;
+  const r = slider.getBoundingClientRect();
+  if (!r.width) return;
+  let ratio = (clientX - r.left) / r.width;
+  ratio = Math.max(0, Math.min(1, ratio));
+  let v = Math.round(DRAW_SIZE_MIN + ratio * (DRAW_SIZE_MAX - DRAW_SIZE_MIN));
+  if (!(v >= DRAW_SIZE_MIN && v <= DRAW_SIZE_MAX)) v = 3;
+  drawSession.size = v;
+  saveDrawSizePref(v);
+  slider.value = String(v);
+  const label = drawSession.toolbar.querySelector(".q-draw-size-label");
+  if (label) label.textContent = v + "px";
+}
+document.addEventListener("touchstart", function (e) {
+  if (!drawSession) return;
+  const t = e.changedTouches && e.changedTouches[0];
+  if (!t) return;
+  const slider = drawSession.toolbar && drawSession.toolbar.querySelector(".q-draw-size");
+  if (!slider) return;
+  const r = slider.getBoundingClientRect();
+  if (t.clientX >= r.left && t.clientX <= r.right && t.clientY >= r.top && t.clientY <= r.bottom) {
+    sliderDragTouch = true;
+    e.preventDefault();
+    drawSliderByClientX(t.clientX);
+  }
+}, { passive: false, capture: true });
+document.addEventListener("touchmove", function (e) {
+  if (!drawSession || !sliderDragTouch) return;
+  const t = e.changedTouches && e.changedTouches[0];
+  if (!t) return;
+  e.preventDefault();
+  drawSliderByClientX(t.clientX);
+}, { passive: false, capture: true });
+document.addEventListener("touchend", function () { sliderDragTouch = false; }, { passive: false, capture: true });
+document.addEventListener("touchcancel", function () { sliderDragTouch = false; }, { passive: false, capture: true });
+
 // 最近一次抬笔/笔活动时间戳：用于"提笔后短时间再次落笔（系统未派发新 pointerdown、只来 move，或把笔误报为 touch）"的兜底续接
 let penUpAt = 0;
 let penActiveAt = 0;   // 最近一次 pen/touch 活动时间，用于识别"笔被系统误报为 touch"
@@ -2256,6 +2300,7 @@ document.addEventListener("touchstart", function (e) {
 
 document.addEventListener("touchmove", function (e) {
   if (!drawSession || !IS_IPAD) return;
+  if (e.target && e.target.closest && e.target.closest(".q-draw-toolbar")) return; // 工具栏（滑块等）不拦截，避免 preventDefault 杀掉原生交互
   const t = e.changedTouches && e.changedTouches[0];
   if (!t) return;
   const cv = drawSession.canvas;
@@ -2346,6 +2391,7 @@ document.addEventListener("pointerdown", function (e) {
 
 document.addEventListener("pointermove", function (e) {
   if (!drawSession) return;
+  if (e.target && e.target.closest && e.target.closest(".q-draw-toolbar")) return; // 工具栏区域不进入绘制，保证滑块可操作
   if (stylusStrokeActive) return; // stylus touch 通道已接管本笔画，避免双画
   if (!isPenLike(e)) return; // 仅手写笔延续绘制（笔被误报为 touch 时按笔特征放行）
   if (e.pointerType === "pen" && (e.pressure > 0 || (e.buttons & 1) !== 0)) penContactInfoAvailable = true;
