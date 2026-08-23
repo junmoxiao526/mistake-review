@@ -364,10 +364,17 @@ footer { text-align: center; color: #999999; font-size: 12px; padding: 20px 0; }
 }
 /* 词典悬停释义 */
 .dict-word {
-  border-bottom: 1px dashed rgba(180, 138, 66, .85);
+  /* 词典悬浮词：不显示虚线下划线，仅保留 hover 背景提示 */
   cursor: help;
   border-radius: 3px;
   transition: background .15s ease;
+}
+/* 填空横线：实线渲染 */
+.q-blank-line {
+  display: inline-block;
+  width: 4em;
+  border-bottom: 2px solid var(--text);
+  vertical-align: -3px;
 }
 .dict-word:hover { background: rgba(255, 215, 130, .28); }
 .dict-tip {
@@ -1235,7 +1242,8 @@ function joinQuestionLines(parts, useDict) {
     }
     out.push(s.split("\n").map(wrap).join("<br>"));
   });
-  return out.join("<br>");
+  // 填空横虚线 → 横实线：连续下划线字符渲染为一条实线
+  return out.join("<br>").replace(/＿{2,}|_{2,}/g, '<span class="q-blank-line"></span>');
 }
 
 function formatQuestionText(q) {
@@ -1566,7 +1574,7 @@ function renderCard(q, idx, inGroup) {
     ? '<div class="q-options">' + opts.map(function (o) {
         const letterMatch = o.match(/^([A-Ea-e])\s*[.、．)）]/);
         const letter = letterMatch ? letterMatch[1].toUpperCase() : "";
-        const body = useDict ? wrapDictWords(esc(o)) : esc(o);
+        const body = (useDict ? wrapDictWords(esc(o)) : esc(o)).replace(/＿{2,}|_{2,}/g, '<span class="q-blank-line"></span>');
         return '<div class="q-option" data-id="' + esc(q.id) + '" data-opt="' + letter + '">' + body + '</div>';
       }).join("") + '</div>'
     : "";
