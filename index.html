@@ -2052,6 +2052,8 @@ function openDrawSession(container, storageKey) {
     color: "#ef4444", size: getDrawSizePref(), erasing: false, drawing: false, interrupted: false,
     scrollLock: null
   };
+  // 激活即锁定滚动链：圈画会话期间禁止页面滚动，空档（抬笔再落笔）不会被系统识别为滚动手势抢走事件流
+  drawSession.scrollLock = lockScrollChain(container);
   img.style.display = "none";
   canvas.classList.add("active");
   toolbar.classList.add("open");
@@ -2062,13 +2064,16 @@ function openDrawSession(container, storageKey) {
 // 防止系统手势抢占滚动导致 pointercancel；finish 时恢复原值
 function lockScrollChain(container) {
   const saved = [];
+  // 关键：必须把 body/html 也纳入锁定（document 级滚动）。iPad/Edge 上笔抬起后
+  // 浏览器会把后续移动识别为页面滚动手势并抢走指针事件，只有锁住根滚动才能保证续接不断触。
   let el = container.parentElement;
-  while (el && el !== document.body && el !== document.documentElement) {
+  while (el) {
     let cs = null;
     try { cs = getComputedStyle(el); } catch (err) {}
     if (cs) {
       const o = (cs.overflowY + " " + cs.overflowX).toLowerCase();
-      if (o.indexOf("auto") >= 0 || o.indexOf("scroll") >= 0) {
+      const isDocRoot = el === document.body || el === document.documentElement;
+      if (isDocRoot || o.indexOf("auto") >= 0 || o.indexOf("scroll") >= 0) {
         saved.push({ el: el, val: el.style.touchAction });
         el.style.touchAction = "none";
       }
@@ -2276,8 +2281,7 @@ document.addEventListener("pointerup", function () {
   if (drawSession) {
     drawSession.drawing = false;
     drawSession.interrupted = false;
-    // 抬笔立即解锁滚动链，圈画期间页面仍可滑动
-    if (drawSession.scrollLock) { restoreScrollChain(drawSession.scrollLock); drawSession.scrollLock = null; }
+    // 注意：抬笔不解锁滚动链，保持会话期锁定直到退出圈画，避免空档期间页面滚动抢占笔事件导致断触
     // 主动释放捕获，避免捕获残留导致后续 pointerdown 丢失
     try { if (drawSession.canvas && drawSession.lastPointerId != null) drawSession.canvas.releasePointerCapture(drawSession.lastPointerId); } catch (err) {}
     drawSession.lastPointerId = null;
@@ -2290,8 +2294,7 @@ document.addEventListener("pointercancel", function () {
   if (drawSession && drawSession.drawing) {
     drawSession.drawing = false;
     drawSession.interrupted = true;
-    // 中断时也解锁滚动链，避免一直锁死页面
-    if (drawSession.scrollLock) { restoreScrollChain(drawSession.scrollLock); drawSession.scrollLock = null; }
+    // 中断也保持滚动锁定：锁定直到退出圈画，防止系统把后续笔移动当滚动手势
     // 同样释放捕获，防止残留
     try { if (drawSession.canvas && drawSession.lastPointerId != null) drawSession.canvas.releasePointerCapture(drawSession.lastPointerId); } catch (err) {}
     drawSession.lastPointerId = null;
