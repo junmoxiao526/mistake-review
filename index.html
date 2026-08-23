@@ -2143,9 +2143,10 @@ let penUpAt = 0;
 let penActiveAt = 0;   // 最近一次 pen/touch 活动时间，用于识别"笔被系统误报为 touch"
 let penHoverAt = 0;    // 最近一次 pen 悬停（hover）时间：笔靠近屏幕但未接触也会触发 pen 事件
 // 设备是否报告接触信息（pressure/buttons）：正常 pen 落笔时 pressure>0 或 buttons=1；
-// 部分设备/浏览器组合不报告，此时靠"抬笔窗口"兜底续接，避免空档断触
+// 部分设备/浏览器组合不报告（如 iPad + Edge/WKWebView 的 pointermove 常为 pressure=0），
+// 此时靠"抬笔窗口"兜底续接，避免空档断触
 let penContactInfoAvailable = false;
-const PEN_RESUME_WINDOW = 10000; // 抬笔后 10s 内再次落笔视为同一笔画，自动续接（覆盖较长停顿）
+const PEN_RESUME_WINDOW = 30000; // 抬笔后 30s 内再次落笔视为同一笔画，自动续接（覆盖较长停顿）
 const PEN_RESUME_FAR = 80;       // 续接时若新落点距断点超过 80px，视为另起一笔，从新落点开始（避免长直线）
 
 // 笔事件判定：手写笔（pen）直接放行；
@@ -2156,8 +2157,16 @@ function isPenLike(e) {
   if (e.pointerType === "touch") {
     const tilt = Math.abs(e.tiltX || 0) + Math.abs(e.tiltY || 0);
     const w = e.width || 0, h = e.height || 0;
-    const smallTip = w > 0 && h > 0 && w <= 4 && h <= 4; // 笔尖接触面 ≤4px，手指通常 10px+
+    const smallTip = w > 0 && h > 0 && w <= 6 && h <= 6; // 笔尖接触面 ≤6px，手指通常 10px+
     if (tilt > 0 || smallTip) return true;
+    // 双窗口兜底：近期有 pen 悬停/活动（笔被系统误报为 touch 时，先触发的 hover 仍是 pen 类型）
+    const now = Date.now();
+    if ((now - penHoverAt) < 3000 || (now - penActiveAt) < 2000) return true;
+    // iPad 特判：Apple Pencil 在 iPadOS 上可能被误报为 touch 且不提供 tilt/width/height（WKWebView 限制）。
+    // iPad Air 4 不支持 hover，悬停窗口无效，此处按设备放行"无面积信息"的触摸。
+    const ua = navigator.userAgent || "";
+    const isIPad = /iPad/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
+    if (isIPad && w === 0 && h === 0) return true;
   }
   return false;
 }
@@ -2228,7 +2237,11 @@ document.addEventListener("pointermove", function (e) {
     const touching = e.pressure > 0 || (e.buttons & 1) !== 0;
     const smallTip = (e.width || 0) > 0 && (e.width || 0) <= 4 && (e.height || 0) > 0 && (e.height || 0) <= 4;
     const withinWindow = (Date.now() - penUpAt) <= PEN_RESUME_WINDOW;
-    const canResume = penContactInfoAvailable ? (touching || smallTip) : withinWindow;
+    // 断触续接判定：三个条件满足任一即可续接
+    // 1) withinWindow：抬笔 30s 窗口（覆盖 iPad+Edge 等 pressure/buttons 恒为 0 的设备）
+    // 2) touching：pressure>0 或 buttons&1（设备正常上报接触时）
+    // 3) smallTip：接触面很小（笔被误报为 touch 且压力为 0 时，靠面积识别）
+    const canResume = withinWindow || touching || smallTip;
     if (!canResume) return;
     if (x < -60 || y < -60 || x > rect.width + 60 || y > rect.height + 60) return;
     // 续接开始绘制时同样锁定滚动链
