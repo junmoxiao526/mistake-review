@@ -1701,6 +1701,7 @@ function drawToolbarHtml() {
     '<span class="q-draw-size-label"></span>' +
     '<button type="button" class="q-draw-tbtn" data-action="eraser" title="橡皮擦">橡皮</button>' +
     '<button type="button" class="q-draw-tbtn danger" data-action="clear" title="清空">清空</button>' +
+    '<button type="button" class="q-draw-tbtn" data-action="scroll-lock" title="锁定滚动：写字流畅；切换后可滑动页面">锁定滚动</button>' +
     '<button type="button" class="q-draw-tbtn" data-action="done" title="完成">完成</button>';
 }
 
@@ -2041,6 +2042,7 @@ document.addEventListener("click", function (e) {
     else if (action === "color-black") drawSession.color = "#000000";
     else if (action === "eraser") drawSession.erasing = !drawSession.erasing;
     else if (action === "clear") drawSession.ctx.clearRect(0, 0, drawSession.canvas.width, drawSession.canvas.height);
+    else if (action === "scroll-lock") setScrollLockEnabled(!scrollLockEnabled);
     else if (action === "done") finishDrawSession();
     if (drawSession) setDrawToolbarState();
   }
@@ -2131,8 +2133,9 @@ function openDrawSession(container, storageKey) {
     color: "#ef4444", size: getDrawSizePref(), erasing: false, drawing: false, interrupted: false,
     scrollLock: null
   };
-  // 滚动链锁定改为"落笔时锁定、抬笔立即解锁"（见 pointerdown/touchstart 落笔处、pointerup/touchend 抬笔处），
-  // 保证圈画会话期间页面可正常滑动；断触由 passive:false + preventDefault 兜底，不再会话级锁死滚动
+  // 滚动锁定开关开启时：圈画会话期间锁定滚动链（激活即锁），保证书写流畅；
+  // 关闭时：页面可滑动（写字可能断触，供翻页等场景临时使用）
+  if (scrollLockEnabled) drawSession.scrollLock = lockScrollChain(container);
   img.style.display = "none";
   canvas.classList.add("active");
   toolbar.classList.add("open");
@@ -2176,6 +2179,11 @@ function setDrawToolbarState() {
   const label = tb.querySelector(".q-draw-size-label");
   if (label) label.textContent = drawSession.size + "px";
   tb.querySelector('[data-action="eraser"]').classList.toggle("active", drawSession.erasing);
+  const slk = tb.querySelector('[data-action="scroll-lock"]');
+  if (slk) {
+    slk.classList.toggle("active", scrollLockEnabled);
+    slk.textContent = scrollLockEnabled ? "锁定滚动" : "可滑动";
+  }
 }
 
 function finishDrawSession() {
@@ -2266,6 +2274,23 @@ document.addEventListener("touchmove", function (e) {
 }, { passive: false, capture: true });
 document.addEventListener("touchend", function () { sliderDragTouch = false; }, { passive: false, capture: true });
 document.addEventListener("touchcancel", function () { sliderDragTouch = false; }, { passive: false, capture: true });
+
+// 滚动锁定开关：默认开启，圈画会话期间锁定滚动链（激活即锁），保证 Apple Pencil 书写流畅不断触；
+// 需要滑动页面时点工具栏"锁定滚动"切换为"可滑动"，滑动完再点回锁定。开关状态全局持久化。
+let scrollLockEnabled = true;
+try { scrollLockEnabled = localStorage.getItem("qdraw_scroll_lock") !== "0"; } catch (err) {}
+function setScrollLockEnabled(on) {
+  scrollLockEnabled = on;
+  try { localStorage.setItem("qdraw_scroll_lock", on ? "1" : "0"); } catch (err) {}
+  if (drawSession) {
+    if (on && !drawSession.scrollLock) drawSession.scrollLock = lockScrollChain(drawSession.card);
+    if (!on && drawSession.scrollLock) {
+      restoreScrollChain(drawSession.scrollLock);
+      drawSession.scrollLock = null;
+    }
+  }
+  if (drawSession) setDrawToolbarState();
+}
 
 // 最近一次抬笔/笔活动时间戳：用于"提笔后短时间再次落笔（系统未派发新 pointerdown、只来 move，或把笔误报为 touch）"的兜底续接
 let penUpAt = 0;
@@ -2415,9 +2440,7 @@ document.addEventListener("touchend", function (e) {
     drawSession.drawing = false;
     drawSession.interrupted = false;
   }
-  // 抬笔立即解锁滚动链，笔画结束后页面可正常滑动
-  restoreScrollChain(drawSession.scrollLock);
-  drawSession.scrollLock = null;
+  // 抬笔保持锁定（滚动锁定开关开启时），直到退出圈画或手动切换，保证书写流畅
 }, { passive: false, capture: true });
 document.addEventListener("touchcancel", function (e) {
   if (!drawSession || !IS_IPAD) return;
@@ -2427,9 +2450,7 @@ document.addEventListener("touchcancel", function (e) {
     drawSession.drawing = false;
     drawSession.interrupted = true; // 保留坐标，后续移动可续接
   }
-  // 取消即解锁滚动链，避免会话期锁死页面滑动
-  restoreScrollChain(drawSession.scrollLock);
-  drawSession.scrollLock = null;
+  // 取消保持锁定（滚动锁定开关开启时），后续移动续接时自动重新锁定
 }, { passive: false, capture: true });
 
 document.addEventListener("pointerdown", function (e) {
@@ -2451,7 +2472,7 @@ document.addEventListener("pointerdown", function (e) {
   hideDictTip();
   // 若上一笔的捕获未释放（快速提落时浏览器可能残留捕获，导致新 pointerdown 不派发），先释放再重新捕获
   try { if (drawSession.lastPointerId != null) cv.releasePointerCapture(drawSession.lastPointerId); } catch (err) {}
-  // 真正开始落笔绘制时才锁定滚动链，抬笔立即解锁，圈画期间页面仍可滑动
+  // 真正开始落笔绘制时才锁定滚动链（开关开启时已在会话级锁定），圈画期间页面仍可滑动
   if (!drawSession.scrollLock) drawSession.scrollLock = lockScrollChain(drawSession.card);
   drawSession.drawing = true;
   drawSession.interrupted = false;
@@ -2529,9 +2550,7 @@ document.addEventListener("pointerup", function () {
   if (drawSession) {
     drawSession.drawing = false;
     drawSession.interrupted = false;
-    // 抬笔立即解锁滚动链：笔画结束后页面可正常滑动；空档续画由 pointermove 的接触判定/抬笔窗口自动重新锁定
-    restoreScrollChain(drawSession.scrollLock);
-    drawSession.scrollLock = null;
+    // 抬笔保持锁定（滚动锁定开关开启时），直到退出圈画或手动切换，保证书写流畅
     // 主动释放捕获，避免捕获残留导致后续 pointerdown 丢失
     try { if (drawSession.canvas && drawSession.lastPointerId != null) drawSession.canvas.releasePointerCapture(drawSession.lastPointerId); } catch (err) {}
     drawSession.lastPointerId = null;
@@ -2545,9 +2564,7 @@ document.addEventListener("pointercancel", function () {
   if (drawSession && drawSession.drawing) {
     drawSession.drawing = false;
     drawSession.interrupted = true;
-    // 取消即解锁滚动链，避免会话期锁死页面滑动；后续笔移动续接时 pointermove 会自动重新锁定
-    restoreScrollChain(drawSession.scrollLock);
-    drawSession.scrollLock = null;
+    // 取消保持锁定（滚动锁定开关开启时），后续笔移动续接时 pointermove 会自动重新锁定
     // 同样释放捕获，防止残留
     try { if (drawSession.canvas && drawSession.lastPointerId != null) drawSession.canvas.releasePointerCapture(drawSession.lastPointerId); } catch (err) {}
     drawSession.lastPointerId = null;
