@@ -1015,11 +1015,16 @@ function renderBarChartSVG(spec) {
   s += '<rect x="' + padL + '" y="' + padT + '" width="' + plotW + '" height="' + plotH + '" fill="none" stroke="#000" stroke-width="1"></rect>';
   // 单位（左上角）
   s += '<text x="' + padL + '" y="' + (padT - 24) + '" font-size="15" fill="#000">单位：' + structJsonEsc(spec.unit || "") + '</text>';
-  // 图例（右上角竖排）
+  // 图例（右上角竖排；带 stroke 的系列画为折线图例）
   const lgX = W - padR - 120, lgY = padT - 56;
   series.forEach(function (ser, i) {
     const y = lgY + i * 22;
-    s += '<rect x="' + lgX + '" y="' + y + '" width="15" height="15" fill="' + ser.color + '" stroke="#000" stroke-width="1"></rect>';
+    if (ser.stroke) {
+      s += '<line x1="' + lgX + '" y1="' + (y + 8) + '" x2="' + (lgX + 15) + '" y2="' + (y + 8) + '" stroke="' + (ser.strokeColor || "#000") + '" stroke-width="2"></line>';
+      s += '<circle cx="' + (lgX + 8) + '" cy="' + (y + 8) + '" r="3" fill="#fff" stroke="#000" stroke-width="1.2"></circle>';
+    } else {
+      s += '<rect x="' + lgX + '" y="' + y + '" width="15" height="15" fill="' + ser.color + '" stroke="#000" stroke-width="1"></rect>';
+    }
     s += '<text x="' + (lgX + 22) + '" y="' + (y + 13) + '" font-size="14" fill="#000">' + structJsonEsc(ser.name) + '</text>';
   });
   // Y轴刻度（左竖线 + 小横线 + 数值）
@@ -1037,6 +1042,7 @@ function renderBarChartSVG(spec) {
   cats.forEach(function (cat, ci) {
     const gx = padL + ci * groupW + (groupW - total) / 2;
     series.forEach(function (ser, si) {
+      if (ser.stroke) return; // 折线系列不画柱
       const v = ser.data[ci];
       const bh = (v - yMin) / (yMax - yMin) * plotH;
       const x = gx + si * (barW + gap);
@@ -1045,9 +1051,75 @@ function renderBarChartSVG(spec) {
       s += '<text x="' + (x + barW / 2) + '" y="' + (y - 6) + '" font-size="11" text-anchor="middle" fill="#000">' + v + '</text>';
     });
   });
+  // 双轴折线 overlay（带 stroke 的系列映射到右侧 y2 轴）
+  const lineSers = series.filter(function (ser) { return !!ser.stroke; });
+  if (lineSers.length && spec.y2Max != null && spec.y2Min != null) {
+    for (let v = spec.y2Min; v <= spec.y2Max + 0.001; v += spec.y2Step) {
+      const y = padT + plotH - (v - spec.y2Min) / (spec.y2Max - spec.y2Min) * plotH;
+      s += '<line x1="' + (padL + plotW) + '" y1="' + y + '" x2="' + (padL + plotW - 8) + '" y2="' + y + '" stroke="#000" stroke-width="1"></line>';
+      s += '<text x="' + (padL + plotW + 8) + '" y="' + (y + 5) + '" font-size="13" fill="#000">' + v + '</text>';
+    }
+    lineSers.forEach(function (ser) {
+      const pts = (ser.data || []).map(function (v, ci) {
+        const x = padL + ci * groupW + groupW / 2;
+        const y = padT + plotH - (v - spec.y2Min) / (spec.y2Max - spec.y2Min) * plotH;
+        return [x, y];
+      });
+      let d = "";
+      pts.forEach(function (p, i) { d += (i ? " L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1); });
+      if (pts.length) {
+        s += '<path d="' + d + '" fill="none" stroke="' + (ser.strokeColor || "#000") + '" stroke-width="2"></path>';
+      }
+      pts.forEach(function (p, i) {
+        s += '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="3.5" fill="#fff" stroke="#000" stroke-width="1.5"></circle>';
+        s += '<text x="' + p[0].toFixed(1) + '" y="' + (p[1] - 8).toFixed(1) + '" font-size="11" text-anchor="middle" fill="#000">' + ser.data[i] + '</text>';
+      });
+    });
+  }
   // 图标题（X轴下方居中）
   if (spec.title) {
     s += '<text x="' + (padL + plotW / 2) + '" y="' + (H - 14) + '" font-size="15" text-anchor="middle" fill="#000">' + structJsonEsc(spec.title) + '</text>';
+  }
+  s += '</svg>';
+  return s;
+}
+
+// 数据驱动 SVG 饼图（对齐 PDF 原图：灰色系扇区 + 引线百分比标签 + 右侧图例 + 下方图标题）
+function renderPieChartSVG(spec) {
+  const W = 760, H = 420;
+  const cx = 250, cy = 195, r = 150;
+  const data = (spec.data || []).filter(function (d) { return Number(d.value) > 0; });
+  const total = data.reduce(function (acc, d) { return acc + (Number(d.value) || 0); }, 0);
+  const colors = ["#C0C0C0", "#FFFFFF", "#646464", "#9E9E9E", "#E0E0E0", "#404040", "#B0B0B0", "#808080"];
+  let s = '<svg class="q-chart-svg" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" font-family="SimSun,serif">';
+  let a0 = -90 * Math.PI / 180;
+  data.forEach(function (d, i) {
+    const ang = (Number(d.value) || 0) / total * 2 * Math.PI;
+    const a1 = a0 + ang;
+    const x0 = cx + r * Math.cos(a0), y0 = cy + r * Math.sin(a0);
+    const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
+    const large = ang > Math.PI ? 1 : 0;
+    const fill = d.color || colors[i % colors.length];
+    s += '<path d="M' + cx + ' ' + cy + ' L' + x0.toFixed(1) + ' ' + y0.toFixed(1) + ' A' + r + ' ' + r + ' 0 ' + large + ' 1 ' + x1.toFixed(1) + ' ' + y1.toFixed(1) + ' Z" fill="' + fill + '" stroke="#000" stroke-width="1"></path>';
+    const mid = a0 + ang / 2;
+    const lx = cx + (r + 16) * Math.cos(mid);
+    const ly = cy + (r + 16) * Math.sin(mid);
+    const tx = cx + (r + 34) * Math.cos(mid);
+    const ty = cy + (r + 34) * Math.sin(mid);
+    s += '<line x1="' + lx.toFixed(1) + '" y1="' + ly.toFixed(1) + '" x2="' + tx.toFixed(1) + '" y2="' + ty.toFixed(1) + '" stroke="#000" stroke-width="1"></line>';
+    s += '<text x="' + tx.toFixed(1) + '" y="' + (ty + 5).toFixed(1) + '" font-size="13" text-anchor="' + (Math.cos(mid) >= 0 ? "start" : "end") + '" fill="#000">' + d.value + '%</text>';
+    a0 = a1;
+  });
+  // 图例（右侧）
+  const lgX = cx + r + 60, lgY = 60;
+  data.forEach(function (d, i) {
+    const y = lgY + i * 26;
+    const fill = d.color || colors[i % colors.length];
+    s += '<rect x="' + lgX + '" y="' + y + '" width="15" height="15" fill="' + fill + '" stroke="#000" stroke-width="1"></rect>';
+    s += '<text x="' + (lgX + 22) + '" y="' + (y + 13) + '" font-size="14" fill="#000">' + structJsonEsc(d.name) + '  ' + d.value + '%</text>';
+  });
+  if (spec.title) {
+    s += '<text x="' + (cx + 40) + '" y="' + (H - 14) + '" font-size="15" text-anchor="middle" fill="#000">' + structJsonEsc(spec.title) + '</text>';
   }
   s += '</svg>';
   return s;
@@ -1087,7 +1159,10 @@ function renderStructuredMaterial(p) {
   if (!m) return "";
   try {
     const spec = JSON.parse(m[2]);
-    if (m[1] === "chart") return '<div class="q-figure">' + renderBarChartSVG(spec) + '</div>';
+    if (m[1] === "chart") {
+      if (spec.type === "pie") return '<div class="q-figure">' + renderPieChartSVG(spec) + '</div>';
+      return '<div class="q-figure">' + renderBarChartSVG(spec) + '</div>';
+    }
     if (m[1] === "table") return '<div class="q-figure">' + renderStructTableHTML(spec) + '</div>';
   } catch (e) {
     // JSON 解析失败：原样返回文本，避免前端崩溃
