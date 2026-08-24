@@ -2369,6 +2369,7 @@ let stylusStrokeActive = false;
 let lastTouchUpAt = 0; // 最近一次 touch 抬笔/取消时间，用于空档续接
 document.addEventListener("touchstart", function (e) {
   if (!drawSession || !IS_IPAD) return;
+  if (!scrollLockEnabled) return; // 可滑动模式：不拦截触摸，页面正常滚动
   const t = e.changedTouches && e.changedTouches[0];
   if (!t) return; // iPad 上统一启用 touch 兜底通道（含 Apple Pencil 与手指）
   if (e.target && e.target.closest && e.target.closest(".q-draw-toolbar")) return;
@@ -2400,6 +2401,7 @@ document.addEventListener("touchstart", function (e) {
 
 document.addEventListener("touchmove", function (e) {
   if (!drawSession || !IS_IPAD) return;
+  if (!scrollLockEnabled) return; // 可滑动模式：不拦截触摸移动，页面正常滚动
   if (e.target && e.target.closest && e.target.closest(".q-draw-toolbar")) return; // 工具栏（滑块等）不拦截，避免 preventDefault 杀掉原生交互
   const t = e.changedTouches && e.changedTouches[0];
   if (!t) return;
@@ -2455,6 +2457,7 @@ document.addEventListener("touchcancel", function (e) {
 
 document.addEventListener("pointerdown", function (e) {
   if (!drawSession) return;
+  if (!scrollLockEnabled) return; // 可滑动模式：不进入绘制，页面正常滚动（按钮点击走 click 事件不受影响）
   if (stylusStrokeActive) return; // stylus touch 通道已接管本笔画，避免双画
   // 工具栏按钮（颜色/粗细/橡皮/完成等）点击：不进入绘制，保证按钮可点
   if (e.target && e.target.closest && e.target.closest(".q-draw-toolbar")) return;
@@ -2493,6 +2496,7 @@ document.addEventListener("pointerdown", function (e) {
 
 document.addEventListener("pointermove", function (e) {
   if (!drawSession) return;
+  if (!scrollLockEnabled) return; // 可滑动模式：不续画，页面正常滚动
   if (e.target && e.target.closest && e.target.closest(".q-draw-toolbar")) return; // 工具栏区域不进入绘制，保证滑块可操作
   if (stylusStrokeActive) return; // stylus touch 通道已接管本笔画，避免双画
   if (!isPenLike(e)) return; // 仅手写笔延续绘制（笔被误报为 touch 时按笔特征放行）
