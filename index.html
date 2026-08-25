@@ -203,12 +203,13 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
 .q-para img.q-material-img { max-width: 100%; height: auto; vertical-align: middle; border-radius: 4px; }
 /* 数据驱动绘制的结构化材料（SVG 柱状图 / HTML 表格） */
 .q-chart-svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
-.q-struct-table { border-collapse: collapse; margin: 4px auto; font-size: 13px; }
-.q-struct-table th, .q-struct-table td { border: 1px solid #000; padding: 5px 14px; text-align: center; white-space: nowrap; }
+.q-struct-table { border-collapse: collapse; margin: 4px auto; font-size: 12px; max-width: 100%; }
+.q-struct-table th, .q-struct-table td { border: 1px solid #000; padding: 4px 8px; text-align: center; white-space: nowrap; }
+.q-struct-table td:first-child, .q-struct-table th:first-child { text-align: left; white-space: normal; min-width: 84px; }
 .q-struct-table th { font-weight: 600; background: #fff; }
 .q-struct-table td:first-child { text-align: left; }
 .q-struct-table-title { font-size: 15px; font-weight: 600; margin: 8px 0 4px; text-align: center; }
-.q-struct-table-wrap { margin: 10px 0; }
+.q-struct-table-wrap { margin: 10px 0; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 /* 同材料多题聚合 */
 .question-group { border: 1px dashed var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; background: var(--bg2); }
 .question-group .group-material { position: relative; margin-bottom: 4px; padding: 4px 2px 8px; }
@@ -1033,10 +1034,32 @@ function renderBarChartSVG(spec) {
     s += '<line x1="' + padL + '" y1="' + y + '" x2="' + (padL + 8) + '" y2="' + y + '" stroke="#000" stroke-width="1"></line>';
     s += '<text x="' + (padL - 8) + '" y="' + (y + 5) + '" font-size="13" text-anchor="end" fill="#000">' + v + '</text>';
   }
-  // X轴年份
+  // X轴类别标签（名称过长自动拆两行，优先在顿号/逗号处断开，防止重叠）
+  function splitXLabel(label, availW) {
+    const cw = 14;
+    const maxChars = Math.max(1, Math.floor(availW / cw));
+    if (label.length <= maxChars) return [label];
+    const half = Math.ceil(label.length / 2);
+    let cut = -1;
+    for (let i = Math.max(2, half - 3); i <= Math.min(label.length - 2, half + 3); i++) {
+      if ("、，, ".indexOf(label[i]) >= 0) { cut = i + 1; break; }
+      if ("、，, ".indexOf(label[i - 1]) >= 0) { cut = i; }
+    }
+    if (cut < 0) cut = half;
+    return [label.slice(0, cut), label.slice(cut)];
+  }
   cats.forEach(function (cat, ci) {
     const cx = padL + ci * groupW + groupW / 2;
-    s += '<text x="' + cx + '" y="' + (H - padB + 26) + '" font-size="14" text-anchor="middle" fill="#000">' + structJsonEsc(cat) + '</text>';
+    const lines = splitXLabel(cat, groupW * 0.96);
+    if (lines.length === 1) {
+      s += '<text x="' + cx + '" y="' + (H - padB + 26) + '" font-size="14" text-anchor="middle" fill="#000">' + structJsonEsc(cat) + '</text>';
+    } else {
+      s += '<text x="' + cx + '" y="' + (H - padB + 20) + '" font-size="14" text-anchor="middle" fill="#000">';
+      lines.forEach(function (ln, li) {
+        s += '<tspan x="' + cx + '" dy="' + (li === 0 ? 0 : 15) + '">' + structJsonEsc(ln) + '</tspan>';
+      });
+      s += '</text>';
+    }
   });
   // 柱体 + 数据标签
   cats.forEach(function (cat, ci) {
