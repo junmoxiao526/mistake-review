@@ -209,7 +209,7 @@ header .sub { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
 .q-struct-table th { font-weight: 600; background: #fff; }
 .q-struct-table td:first-child { text-align: left; }
 .q-struct-table-title { font-size: 15px; font-weight: 600; margin: 8px 0 4px; text-align: center; }
-.q-struct-table-wrap { margin: 10px 0; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.q-struct-table-wrap { margin: 10px 0; }
 /* 同材料多题聚合 */
 .question-group { border: 1px dashed var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; background: var(--bg2); }
 .question-group .group-material { position: relative; margin-bottom: 4px; padding: 4px 2px 8px; }
@@ -1174,6 +1174,31 @@ function renderStructTableHTML(spec) {
   return s;
 }
 
+// 表格自适应：按数据量自动缩放字号/内边距，使表格完整放入容器宽度（无横向滚动，保证圈画可用）
+function fitTableToWidth(wrapEl) {
+  const table = wrapEl.querySelector("table");
+  if (!table) return;
+  const availW = wrapEl.clientWidth || (wrapEl.parentElement && wrapEl.parentElement.clientWidth) || 0;
+  if (!availW) return;
+  let fs = 14; // 数据少时偏大，数据多时自动缩小
+  table.style.fontSize = fs + "px";
+  const cells = table.querySelectorAll("th, td");
+  const setPad = function (fsz) {
+    const hp = Math.max(1, Math.round(fsz * 0.3));
+    const wp = Math.max(2, Math.round(fsz * 0.55));
+    cells.forEach(function (c) { c.style.padding = hp + "px " + wp + "px"; });
+  };
+  setPad(fs);
+  while (table.getBoundingClientRect().width > availW && fs > 8) {
+    fs -= 0.5;
+    table.style.fontSize = fs + "px";
+    setPad(fs);
+  }
+}
+function fitAllTables() {
+  document.querySelectorAll(".q-struct-table-wrap").forEach(fitTableToWidth);
+}
+
 // 材料内嵌图片标记：![说明](data:image/png;base64,xxx)（与"question 以 data:image 开头=整题图片"约定并存）
 const IMG_MARK_RE = /!\[([^\]]*)\]\((data:image\/[^)]+)\)/;
 
@@ -1750,6 +1775,7 @@ function renderList() {
     return;
   }
   list.innerHTML = groupQuestions(state.questions).map(renderGroup).join("");
+  fitAllTables();
 }
 
 function setMastery(id, mastery) {
