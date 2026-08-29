@@ -1417,8 +1417,15 @@ function groupQuestions(questions) {
 }
 
 function renderGroup(g) {
-  // 单题（无共享材料 或 组内仅剩1题）：按原逻辑整卡渲染（材料含在卡片内）
-  if (!g.material_group || g.items.length < 2) {
+  // 仅"真正共享同一材料"的组才分组渲染：组内>=2题 且 组内存在可拆出题干的题（材料+空行+题号 结构，如资料分析）。
+  // 言语片段阅读/逻辑填空等独立题即使 material_group 相同（仅用于标记刷次），也各自整卡渲染，
+  // 避免【材料】与【题干】两区块渲染同一整段内容而重复。
+  const isSharedMaterial = !!(g.material_group && g.items.length >= 2 &&
+    g.items.some(function (x) {
+      const sp = splitMaterialQuestion(x.q.question || "");
+      return !!(sp[1] && sp[0]);
+    }));
+  if (!isSharedMaterial) {
     return g.items.map(function (x) { return renderCard(x.q, x.idx, false); }).join("");
   }
   // 组内>=2题：材料只渲染一次（取全量中该组第一条，保证筛选后材料仍完整）
