@@ -534,6 +534,20 @@ footer { text-align: center; color: #999999; font-size: 12px; padding: 20px 0; }
     </div>
   </div>
 
+  <!-- 当天事当天了：平时=今日待消化，周日=本周待复盘 -->
+  <div class="review-banner" id="dailyBanner" style="display:none;">
+    <div class="review-banner-head" id="dailyBannerHead">
+      <span class="review-banner-title" id="dailyTitle">今日待消化</span>
+      <span class="review-banner-badge" id="dailyCount" style="display:none;">0</span>
+      <span class="review-banner-done" id="dailyDone" style="display:none;">今日事今日毕</span>
+      <button type="button" class="review-banner-toggle" id="dailyToggle">展开清单</button>
+    </div>
+    <div class="review-panel" id="dailyPanel" style="display:none;">
+      <div class="review-panel-tip" id="dailyTip"></div>
+      <div class="review-panel-body" id="dailyPanelBody"></div>
+    </div>
+  </div>
+
   <div class="stat-cards" id="statCards">
     <div class="stat-card total"><div class="num" id="stTotal">-</div><div class="label">错题总数</div></div>
     <div class="stat-card weak"><div class="num" id="stWeak">-</div><div class="label">未掌握</div></div>
@@ -795,6 +809,12 @@ function mergeReviewPlansFromMastery(mRows) {
     if (!r || !r.id) return;
     const cp = cloudToPlan(r);
     if (cp) {
+      // 云端为准，但保留本地「当天事当天了」标记（云端无这两个列，刷新后不丢失）
+      const lp = reviewPlanMap[r.id];
+      if (lp && (lp.last_daily_review_date || lp.last_weekly_review_date)) {
+        cp.last_daily_review_date = lp.last_daily_review_date;
+        cp.last_weekly_review_date = lp.last_weekly_review_date;
+      }
       merged[r.id] = cp;                 // 云端为准
     } else if (localHasAny && reviewPlanMap[r.id]) {
       merged[r.id] = reviewPlanMap[r.id]; // 本地独有计划：保留并上传合并到云端
@@ -821,6 +841,12 @@ function onReviewAnswer(id, correct) {
   let p = reviewPlanMap[id];
   if (!p) {
     p = { first_reviewed_at: today, stage: 0, next_review_date: reviewAddDays(today, 1), wrong_count: 0 };
+  } else if (!p.first_reviewed_at) {
+    // 从未进入复习计划（如当天事当天了板块首次作答）：初始化并进入艾宾浩斯轨道
+    p.first_reviewed_at = today;
+    p.stage = 0;
+    p.next_review_date = reviewAddDays(today, 1);
+    p.wrong_count = p.wrong_count || 0;
   } else if (correct) {
     const ns = (Number(p.stage) || 0) + 1;
     if (ns >= REVIEW_INTERVAL.length) {
@@ -836,10 +862,113 @@ function onReviewAnswer(id, correct) {
     p.next_review_date = reviewAddDays(today, 1);
     p.wrong_count = (Number(p.wrong_count) || 0) + 1;
   }
+  // 当天事当天了：作答无论对错即算完成（本地标记）
+  p.last_daily_review_date = today;
+  if (isSundayToday()) p.last_weekly_review_date = today;
   reviewPlanMap[id] = p;
   saveReviewPlan();
-  writeServerPlan(id, p);
+  // 云端尽力写：艾宾浩斯四列（writeServerPlan 内置）由原路径写入；
+  // 两个新字段云端无列时静默失败，不影响本地功能
+  try {
+    writeServerPlan(id, p);
+  } catch (e) {}
+  try {
+    supabaseClient.from("mastery")
+      .update({ last_daily_review_date: p.last_daily_review_date, last_weekly_review_date: p.last_weekly_review_date })
+      .eq("id", id)
+      .then(function (res) {
+        if (res && res.error) console.warn("当天事当天了云端写入失败(本地已保存):", res.error.message);
+      });
+  } catch (e) {}
   updateReviewBanner();
+  updateDailyBanner();
+}
+// ===== 当天事当天了 =====
+function isSundayToday() {
+  const d = new Date();
+  return d.getDay() === 0; // 0=周日
+}
+// 将 ISO 时间戳转为本地时区 YYYY-MM-DD
+function toLocalDateStr(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+// 本周一日期串：周一=今天；周日=今天-6天；其他=今天-(weekday-1)
+function weekStartDateStr() {
+  const d = new Date();
+  const wd = d.getDay(); // 0=周日, 1=周一 ... 6=周六
+  const diff = wd === 0 ? 6 : wd - 1;
+  const m = new Date(d);
+  m.setDate(d.getDate() - diff);
+  return m.getFullYear() + "-" + String(m.getMonth() + 1).padStart(2, "0") + "-" + String(m.getDate()).padStart(2, "0");
+}
+// 两态筛选：非周日=今日待消化(今天上传且今天未消化)；周日=本周待复盘(本周一~今天上传且本周日未复盘)
+function dailyDueQuestions(today) {
+  const sunday = isSundayToday();
+  const weekStart = sunday ? weekStartDateStr() : "";
+  return allQuestions.filter(function (q) {
+    const d = toLocalDateStr(q.created_at);
+    if (!d) return false;
+    const p = reviewPlanMap[q.id] || null;
+    if (sunday) {
+      return d >= weekStart && d <= today && !(p && p.last_weekly_review_date === today);
+    }
+    return d === today && !(p && p.last_daily_review_date === today);
+  });
+}
+function updateDailyBanner() {
+  const banner = $("#dailyBanner");
+  if (!banner) return;
+  const today = reviewTodayStr();
+  const sunday = isSundayToday();
+  const due = dailyDueQuestions(today);
+  // 横幅可见性：今日/本周只要有上传题目即显示
+  const weekStart = sunday ? weekStartDateStr() : "";
+  const hasAny = allQuestions.some(function (q) {
+    const d = toLocalDateStr(q.created_at);
+    if (!d) return false;
+    return sunday ? (d >= weekStart && d <= today) : (d === today);
+  });
+  banner.style.display = hasAny ? "" : "none";
+  const title = $("#dailyTitle");
+  const countEl = $("#dailyCount");
+  const doneEl = $("#dailyDone");
+  if (title) title.textContent = sunday ? "本周待复盘" : "今日待消化";
+  if (doneEl) doneEl.textContent = sunday ? "本周复盘完成" : "今日事今日毕";
+  if (due.length > 0) {
+    if (countEl) { countEl.style.display = ""; countEl.textContent = due.length; }
+    if (doneEl) doneEl.style.display = "none";
+  } else {
+    if (countEl) countEl.style.display = "none";
+    if (doneEl) doneEl.style.display = "";
+  }
+  const panel = $("#dailyPanel");
+  if (panel && panel.style.display !== "none") renderDailyPanel();
+}
+function renderDailyPanel() {
+  const body = $("#dailyPanelBody");
+  if (!body) return;
+  const today = reviewTodayStr();
+  const sunday = isSundayToday();
+  const due = dailyDueQuestions(today);
+  const tip = $("#dailyTip");
+  if (tip) {
+    tip.textContent = sunday
+      ? "共 " + due.length + " 题待复盘（本周一至今天上传）。作答无论对错即算完成；做对推进阶段，做错重置第 1 天。"
+      : "共 " + due.length + " 题待消化（今天上传）。作答无论对错即算完成；做对推进阶段，做错重置第 1 天。";
+  }
+  if (due.length === 0) {
+    body.innerHTML = '<div class="empty"></div>';
+    return;
+  }
+  // 按题库原始顺序排列，复用艾宾浩斯分组/卡片渲染
+  const ordered = due.slice().sort(function (a, b) {
+    return allQuestions.findIndex(function (x) { return x.id === a.id; }) -
+           allQuestions.findIndex(function (x) { return x.id === b.id; });
+  });
+  body.innerHTML = groupQuestions(ordered).map(renderGroup).join("");
 }
 function isReviewDue(p, today) {
   if (!p) return false;
@@ -1955,6 +2084,7 @@ function loadData() {
     serverStats = null;
     applyServerData(qRes.data || []);
     updateReviewBanner();
+    updateDailyBanner();
   }).catch(function (e) {
     $("#list").innerHTML = '<div class="empty">数据加载失败：' + esc(e.message || e) + '</div>';
   });
@@ -2005,6 +2135,20 @@ $("#reviewBannerHead").addEventListener("click", function (e) {
     renderReviewPanel();
     panel.style.display = "";
     $("#reviewToggle").textContent = "折叠清单";
+  }
+});
+
+// 当天事当天了模块：展开/折叠
+$("#dailyBannerHead").addEventListener("click", function () {
+  const panel = $("#dailyPanel");
+  const open = panel.style.display !== "none";
+  if (open) {
+    panel.style.display = "none";
+    $("#dailyToggle").textContent = "展开清单";
+  } else {
+    renderDailyPanel();
+    panel.style.display = "";
+    $("#dailyToggle").textContent = "折叠清单";
   }
 });
 
