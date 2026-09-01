@@ -1127,7 +1127,9 @@ function structJsonEsc(s) {
 // Y轴10000~50000每10000带小刻度线，无网格线，5年×3柱，柱顶黑色整数标签，X轴下方图标题）
 function renderBarChartSVG(spec) {
   const W = 760, H = 420;
-  const padL = 70, padR = 24, padT = 64, padB = 70;
+  const padL = 70, padR = 24, padT = 64;
+  // 底部图例+标题同时存在时加大底部留白，避免图例与标题/轴标签互相遮挡
+  const padB = (spec.legendPos === "bottom" && spec.title) ? 96 : 70;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const cats = spec.xAxis || [];
   const series = spec.series || [];
@@ -1165,7 +1167,8 @@ function renderBarChartSVG(spec) {
     });
     const totalW = legItems.reduce(function (a, b) { return a + b.w; }, 0);
     let lx = (W - totalW) / 2;
-    const lgY = H - 24;
+    // 有标题时图例上移给标题让位；无标题时保持在底部
+    const lgY = spec.title ? H - 48 : H - 24;
     legItems.forEach(function (it) {
       if (it.ser.stroke) {
         const mk = it.ser.marker || "circle";
