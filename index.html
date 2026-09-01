@@ -448,6 +448,24 @@ footer { text-align: center; color: #999999; font-size: 12px; padding: 20px 0; }
 }
 .search-tip button:hover { background: rgba(138, 90, 27, .14); color: #8A5A1B; }
 .search-tip button + button { margin-left: 3px; }
+.search-tip button.mark-active { background: #fdf3e0; color: #b45309; font-weight: 600; }
+/* 选中文字标记层：与圈画同源（覆盖层方案），不修改题目原文 DOM */
+.q-mark-layer {
+  position: absolute; inset: 0; z-index: 9; pointer-events: none;
+  overflow: hidden; border-radius: var(--radius);
+}
+.q-mark-box {
+  position: absolute;
+  background: rgba(255, 210, 90, .42);
+  border: 1px solid rgba(217, 138, 0, .55);
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.5) inset;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.q-mark-box:hover { background: rgba(255, 190, 60, .6); border-color: #b45309; }
+.q-mark-clear-btn { color: #b45309 !important; border-color: #eac98a !important; }
+.q-mark-clear-btn:hover { border-color: #b45309 !important; color: #b45309 !important; }
 
 /* ===== 艾宾浩斯复习推送 - 今日待复习模块 ===== */
 .review-banner {
@@ -1946,6 +1964,9 @@ function renderCard(q, idx, inGroup) {
   const drawImgHtml = savedDraw
     ? '<img class="q-draw-img" src="' + savedDraw + '" alt="">'
     : '<img class="q-draw-img" alt="" style="display:none;">';
+  let savedMarks = [];
+  try { savedMarks = JSON.parse(localStorage.getItem("qmark_" + q.id) || "[]") || []; } catch (err) { savedMarks = []; }
+  const hasMarks = savedMarks.length > 0;
 
   return '<div class="question-card" data-id="' + esc(q.id) + '">' +
     '<div class="q-head">' +
@@ -1960,8 +1981,10 @@ function renderCard(q, idx, inGroup) {
       '<button class="btn btn-outline draw-btn" data-id="' + esc(q.id) + '">圈画</button>' +
       '<button class="btn btn-outline edit-btn" data-id="' + esc(q.id) + '">编辑</button>' +
       '<button type="button" class="btn btn-outline screenshot-btn" title="将本题题干与选项截图保存为图片">截图</button>' +
+      (hasMarks ? '<button type="button" class="btn btn-outline q-mark-clear-btn" data-id="' + esc(q.id) + '" title="清除本题全部文字标记">清除标记</button>' : '') +
       '<button class="btn btn-danger delete-btn" data-id="' + esc(q.id) + '">删除</button>' +
     '</div>' +
+    '<div class="q-mark-layer"></div>' +
     '<div class="answer-panel">' + rows.join("") + '</div>' +
     '<div class="q-draw">' + drawImgHtml +
       '<canvas class="q-draw-canvas"></canvas>' +
@@ -2005,6 +2028,7 @@ function renderList() {
   }
   list.innerHTML = groupQuestions(state.questions).map(renderGroup).join("");
   fitAllTables();
+  applyAllCardMarks();
 }
 
 function setMastery(id, mastery) {
@@ -3503,6 +3527,14 @@ function getSearchTip() {
     _searchTip.addEventListener("mousedown", function (e) {
       e.preventDefault(); // 防止点击按钮时丢失文本选区
     });
+    // 文字标记：与圈画同源（覆盖层），点击将当前选区文字高亮并持久化到 qmark_{id}
+    const mkBtn = document.createElement("button");
+    mkBtn.type = "button";
+    mkBtn.className = "mark-active";
+    mkBtn.textContent = "标记";
+    mkBtn.title = "将选中的文字高亮标记";
+    mkBtn.addEventListener("click", addMarkFromSelection);
+    _searchTip.appendChild(mkBtn);
     SEARCH_ENGINES.forEach(function (se) {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -3522,6 +3554,78 @@ function getSearchTip() {
 function hideSearchTip() {
   if (_searchTip) _searchTip.style.display = "none";
   _searchTipSel = null;
+}
+// ===== 选中文字标记（与圈画同源：覆盖层方案，不修改题目原文 DOM）=====
+const QMARK_PREFIX = "qmark_";
+function getQmarkKey(id) { return QMARK_PREFIX + id; }
+function readQMarks(id) {
+  try { return JSON.parse(localStorage.getItem(getQmarkKey(id)) || "[]") || []; }
+  catch (err) { return []; }
+}
+function writeQMarks(id, marks) {
+  try { localStorage.setItem(getQmarkKey(id), JSON.stringify(marks)); }
+  catch (err) { console.warn("保存文字标记失败", err); }
+}
+// 将当前文本选区转换为相对卡片的矩形坐标并持久化
+function addMarkFromSelection() {
+  const sel = window.getSelection && window.getSelection();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+  const range = sel.getRangeAt(0);
+  const container = range.commonAncestorContainer;
+  const node = container.nodeType === 1 ? container : (container.parentNode || null);
+  const card = node && node.closest ? node.closest(".question-card") : null;
+  if (!card) return;
+  const id = card.dataset.id;
+  if (!id) return;
+  const text = sel.toString().replace(/\s+/g, " ").trim();
+  if (!text) return;
+  const cardRect = card.getBoundingClientRect();
+  const rects = [];
+  const rs = range.getClientRects();
+  for (let i = 0; i < rs.length; i++) {
+    const r = rs[i];
+    if (r.width < 0.5 || r.height < 0.5) continue;
+    rects.push({
+      x: Math.round(r.left - cardRect.left),
+      y: Math.round(r.top - cardRect.top),
+      w: Math.round(r.width),
+      h: Math.round(r.height)
+    });
+  }
+  if (!rects.length) return;
+  const marks = readQMarks(id);
+  marks.push({ text: text, rects: rects, ts: Date.now() });
+  writeQMarks(id, marks);
+  hideSearchTip();
+  try { sel.removeAllRanges(); } catch (err) {}
+  renderList(); // 重建列表以刷新高亮与"清除标记"按钮
+}
+// 重建单张卡片的文字标记覆盖层
+function applyCardMarks(card) {
+  const layer = card.querySelector(".q-mark-layer");
+  if (!layer) return;
+  layer.innerHTML = "";
+  const id = card.dataset.id;
+  if (!id) return;
+  const marks = readQMarks(id);
+  marks.forEach(function (mk, idx) {
+    (mk.rects || []).forEach(function (r) {
+      const box = document.createElement("div");
+      box.className = "q-mark-box";
+      box.dataset.qid = id;
+      box.dataset.midx = String(idx);
+      box.style.left = r.x + "px";
+      box.style.top = r.y + "px";
+      box.style.width = r.w + "px";
+      box.style.height = r.h + "px";
+      box.title = "点击取消此标记：" + (mk.text || "");
+      layer.appendChild(box);
+    });
+  });
+}
+// 重建所有卡片的文字标记覆盖层（renderList 后调用）
+function applyAllCardMarks() {
+  document.querySelectorAll(".question-card").forEach(applyCardMarks);
 }
 function isQuestionTextNode(node) {
   return !!(node && node.closest && node.closest(".q-text, .q-option, .answer-panel"));
@@ -3569,6 +3673,30 @@ document.addEventListener("mousedown", function (e) {
   if (_searchTip && _searchTip.style.display === "block") {
     if (e.target === _searchTip || (_searchTip.contains && _searchTip.contains(e.target))) return;
     hideSearchTip(); // 点击其他空白处时浮层消失
+  }
+});
+
+// 文字标记点击委托：点击高亮块取消单处标记；点击"清除标记"清空本题全部标记
+document.addEventListener("click", function (e) {
+  const box = e.target && e.target.closest ? e.target.closest(".q-mark-box") : null;
+  if (box) {
+    const qid = box.dataset.qid;
+    const midx = parseInt(box.dataset.midx, 10);
+    if (qid && !isNaN(midx)) {
+      const marks = readQMarks(qid);
+      if (midx >= 0 && midx < marks.length) {
+        marks.splice(midx, 1);
+        if (marks.length) writeQMarks(qid, marks);
+        else { try { localStorage.removeItem(getQmarkKey(qid)); } catch (err) {} }
+        renderList();
+      }
+    }
+    return;
+  }
+  const clr = e.target && e.target.closest ? e.target.closest(".q-mark-clear-btn") : null;
+  if (clr && clr.dataset.id) {
+    try { localStorage.removeItem(getQmarkKey(clr.dataset.id)); } catch (err) {}
+    renderList();
   }
 });
 
