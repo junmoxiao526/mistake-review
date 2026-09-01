@@ -1145,18 +1145,52 @@ function renderBarChartSVG(spec) {
   s += '<rect x="' + padL + '" y="' + padT + '" width="' + plotW + '" height="' + plotH + '" fill="none" stroke="#000" stroke-width="1"></rect>';
   // 单位（左上角）
   s += '<text x="' + padL + '" y="' + (padT - 24) + '" font-size="15" fill="#000">单位：' + structJsonEsc(spec.unit || "") + '</text>';
-  // 图例（右上角竖排；带 stroke 的系列画为折线图例）
-  const lgX = W - padR - 120, lgY = padT - 56;
-  series.forEach(function (ser, i) {
-    const y = lgY + i * 22;
-    if (ser.stroke) {
-      s += '<line x1="' + lgX + '" y1="' + (y + 8) + '" x2="' + (lgX + 15) + '" y2="' + (y + 8) + '" stroke="' + (ser.strokeColor || "#000") + '" stroke-width="2"></line>';
-      s += '<circle cx="' + (lgX + 8) + '" cy="' + (y + 8) + '" r="3" fill="#fff" stroke="#000" stroke-width="1.2"></circle>';
-    } else {
-      s += '<rect x="' + lgX + '" y="' + y + '" width="15" height="15" fill="' + ser.color + '" stroke="#000" stroke-width="1"></rect>';
+  // 图例符号（折线系列：按 marker 绘制实心三角/圆点/菱形，默认圆点）
+  function legMarkerSvg(mk, cx, cy) {
+    const r = 4;
+    if (mk === "triangle") {
+      return '<path d="M' + cx + ' ' + (cy - r) + ' L' + (cx + r) + ' ' + (cy + r) + ' L' + (cx - r) + ' ' + (cy + r) + ' Z" fill="#000" stroke="#000" stroke-width="1"></path>';
     }
-    s += '<text x="' + (lgX + 22) + '" y="' + (y + 13) + '" font-size="14" fill="#000">' + structJsonEsc(ser.name) + '</text>';
-  });
+    if (mk === "diamond") {
+      return '<path d="M' + cx + ' ' + (cy - r) + ' L' + (cx + r) + ' ' + cy + ' L' + cx + ' ' + (cy + r) + ' L' + (cx - r) + ' ' + cy + ' Z" fill="#000" stroke="#000" stroke-width="1"></path>';
+    }
+    return '<circle cx="' + cx + '" cy="' + cy + '" r="3.5" fill="#000" stroke="#000" stroke-width="1"></circle>';
+  }
+  // 图例：spec.legendPos === "bottom" 时图下方居中横排（标题上方）；默认右上角竖排
+  if (spec.legendPos === "bottom") {
+    const legItems = series.map(function (ser) {
+      const name = structJsonEsc(ser.name || "");
+      const w = 16 + 10 + name.length * 14 + 18;
+      return { ser: ser, name: name, w: w };
+    });
+    const totalW = legItems.reduce(function (a, b) { return a + b.w; }, 0);
+    let lx = (W - totalW) / 2;
+    const lgY = H - 24;
+    legItems.forEach(function (it) {
+      if (it.ser.stroke) {
+        const mk = it.ser.marker || "circle";
+        const y = lgY - 6;
+        s += '<line x1="' + lx + '" y1="' + y + '" x2="' + (lx + 14) + '" y2="' + y + '" stroke="' + (it.ser.strokeColor || "#000") + '" stroke-width="2"></line>';
+        s += legMarkerSvg(mk, lx + 7, y);
+      } else {
+        s += '<rect x="' + lx + '" y="' + (lgY - 13) + '" width="15" height="15" fill="' + it.ser.color + '" stroke="#000" stroke-width="1"></rect>';
+      }
+      s += '<text x="' + (lx + 22) + '" y="' + lgY + '" font-size="14" fill="#000">' + it.name + '</text>';
+      lx += it.w;
+    });
+  } else {
+    const lgX = W - padR - 120, lgY = padT - 56;
+    series.forEach(function (ser, i) {
+      const y = lgY + i * 22;
+      if (ser.stroke) {
+        s += '<line x1="' + lgX + '" y1="' + (y + 8) + '" x2="' + (lgX + 15) + '" y2="' + (y + 8) + '" stroke="' + (ser.strokeColor || "#000") + '" stroke-width="2"></line>';
+        s += '<circle cx="' + (lgX + 8) + '" cy="' + (y + 8) + '" r="3" fill="#fff" stroke="#000" stroke-width="1.2"></circle>';
+      } else {
+        s += '<rect x="' + lgX + '" y="' + y + '" width="15" height="15" fill="' + ser.color + '" stroke="#000" stroke-width="1"></rect>';
+      }
+      s += '<text x="' + (lgX + 22) + '" y="' + (y + 13) + '" font-size="14" fill="#000">' + structJsonEsc(ser.name) + '</text>';
+    });
+  }
   // Y轴刻度（左竖线 + 小横线 + 数值）
   for (let v = yMin; v <= yMax + 0.001; v += yStep) {
     const y = yScale(v);
@@ -1190,6 +1224,22 @@ function renderBarChartSVG(spec) {
       s += '</text>';
     }
   });
+  // 标签避让：柱顶标签与折线标签互相冲突时，将冲突一方移到安全位置（默认保持原布局，仅冲突时调整）
+  const labelFS = 11;
+  const estLabelW = function (t) {
+    let w = 0;
+    for (let i = 0; i < t.length; i++) w += (t.charCodeAt(i) > 0x2E80 ? labelFS : labelFS * 0.6);
+    return w;
+  };
+  const placedLabels = []; // {cx, baseY, w, ci}
+  const labelClash = function (cx, baseY, w, ci) {
+    for (let i = 0; i < placedLabels.length; i++) {
+      const L = placedLabels[i];
+      if (L.ci !== ci) continue;
+      if (Math.abs(baseY - L.baseY) < labelFS + 7 && Math.abs(cx - L.cx) < (w + L.w) / 2 + 3) return true;
+    }
+    return false;
+  };
   // 柱体 + 数据标签
   cats.forEach(function (cat, ci) {
     const gx = padL + ci * groupW + (groupW - total) / 2;
@@ -1200,7 +1250,11 @@ function renderBarChartSVG(spec) {
       const x = gx + si * (barW + gap);
       const y = padT + plotH - bh;
       s += '<rect x="' + x + '" y="' + y + '" width="' + barW + '" height="' + bh + '" fill="' + ser.color + '" stroke="#000" stroke-width="1"></rect>';
-      s += '<text x="' + (x + barW / 2) + '" y="' + (y - 6) + '" font-size="11" text-anchor="middle" fill="#000">' + v + '</text>';
+      if (spec.barLabels !== false) {
+        const lcx = x + barW / 2, lby = y - 6;
+        s += '<text x="' + lcx + '" y="' + lby + '" font-size="11" text-anchor="middle" fill="#000">' + v + '</text>';
+        placedLabels.push({ cx: lcx, baseY: lby, w: estLabelW(String(v)), ci: ci });
+      }
     });
   });
   // 双轴折线 overlay（带 stroke 的系列映射到右侧 y2 轴）
@@ -1223,8 +1277,20 @@ function renderBarChartSVG(spec) {
         s += '<path d="' + d + '" fill="none" stroke="' + (ser.strokeColor || "#000") + '" stroke-width="2"></path>';
       }
       pts.forEach(function (p, i) {
-        s += '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="3.5" fill="#fff" stroke="#000" stroke-width="1.5"></circle>';
-        s += '<text x="' + p[0].toFixed(1) + '" y="' + (p[1] - 8).toFixed(1) + '" font-size="11" text-anchor="middle" fill="#000">' + ser.data[i] + '</text>';
+        if (ser.marker) {
+          s += legMarkerSvg(ser.marker, p[0], p[1]);
+        } else {
+          s += '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="3.5" fill="#fff" stroke="#000" stroke-width="1.5"></circle>';
+        }
+        // 折线标签避让：默认点在正上方(p[1]-8)；与同类别柱顶/折线标签冲突时逐级下移找安全位置
+        const lw = estLabelW(String(ser.data[i]));
+        let lby = p[1] - 8;
+        for (let k = 0; k < 6; k++) {
+          if (!labelClash(p[0], lby, lw, i)) break;
+          lby = p[1] + 14 + 13 * k;
+        }
+        s += '<text x="' + p[0].toFixed(1) + '" y="' + lby.toFixed(1) + '" font-size="11" text-anchor="middle" fill="#000">' + ser.data[i] + '</text>';
+        placedLabels.push({ cx: p[0], baseY: lby, w: lw, ci: i });
       });
     });
   }
