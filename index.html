@@ -1234,11 +1234,13 @@ function renderBarChartSVG(spec) {
       s += '<text x="' + (lgX + 22) + '" y="' + (y + 13) + '" font-size="14" fill="#000">' + structJsonEsc(ser.name) + '</text>';
     });
   }
-  // Y轴刻度（左竖线 + 小横线 + 数值）
+  // Y轴刻度（左竖线 + 小横线 + 数值；spec.yAxisLabels === false 时只画刻度线不画数值文字）
   for (let v = yMin; v <= yMax + 0.001; v += yStep) {
     const y = yScale(v);
     s += '<line x1="' + padL + '" y1="' + y + '" x2="' + (padL + 8) + '" y2="' + y + '" stroke="#000" stroke-width="1"></line>';
-    s += '<text x="' + (padL - 8) + '" y="' + (y + 5) + '" font-size="13" text-anchor="end" fill="#000">' + v + '</text>';
+    if (spec.yAxisLabels !== false) {
+      s += '<text x="' + (padL - 8) + '" y="' + (y + 5) + '" font-size="13" text-anchor="end" fill="#000">' + v + '</text>';
+    }
   }
   // X轴类别标签（名称过长自动拆两行，优先在顿号/逗号处断开，防止重叠）
   function splitXLabel(label, availW) {
