@@ -2539,6 +2539,10 @@ function finishDrawSession() {
 // 画笔粗细偏好：1~8px，持久化到 localStorage，题干与材料共用
 const DRAW_SIZE_PREF_KEY = "qdraw_size_pref";
 const DRAW_SIZE_MIN = 1, DRAW_SIZE_MAX = 8;
+// 橡皮擦宽度倍数：橡皮实际线宽 = 画笔粗细 × DRAW_ERASER_MULT（默认 ×2，明显粗于画笔，便于快速大范围擦除）
+const DRAW_ERASER_MULT = 2;
+// 实际绘制线宽：橡皮模式下按放大倍数加粗，画笔仍用滑块原值
+function currentDrawWidth() { return drawSession.erasing ? Math.round(drawSession.size * DRAW_ERASER_MULT) : drawSession.size; }
 function getDrawSizePref() {
   try {
     const v = parseInt(localStorage.getItem(DRAW_SIZE_PREF_KEY), 10);
@@ -2722,7 +2726,7 @@ document.addEventListener("touchstart", function (e) {
     drawSession.ctx.globalCompositeOperation = drawSession.erasing ? "destination-out" : "source-over";
     drawSession.ctx.fillStyle = drawSession.color;
     drawSession.ctx.beginPath();
-    drawSession.ctx.arc(drawSession.lastX, drawSession.lastY, drawSession.size / 2, 0, Math.PI * 2);
+    drawSession.ctx.arc(drawSession.lastX, drawSession.lastY, currentDrawWidth() / 2, 0, Math.PI * 2);
     drawSession.ctx.fill();
     drawSession.ctx.beginPath();
     drawSession.ctx.moveTo(drawSession.lastX, drawSession.lastY);
@@ -2755,7 +2759,7 @@ document.addEventListener("touchmove", function (e) {
   }
   drawSession.ctx.globalCompositeOperation = drawSession.erasing ? "destination-out" : "source-over";
   drawSession.ctx.strokeStyle = drawSession.color;
-  drawSession.ctx.lineWidth = drawSession.size;
+  drawSession.ctx.lineWidth = currentDrawWidth();
   drawSession.ctx.lineCap = "round";
   drawSession.ctx.lineJoin = "round";
   drawSession.ctx.lineTo(x, y);
@@ -2817,7 +2821,7 @@ document.addEventListener("pointerdown", function (e) {
   drawSession.ctx.globalCompositeOperation = drawSession.erasing ? "destination-out" : "source-over";
   drawSession.ctx.fillStyle = drawSession.color;
   drawSession.ctx.beginPath();
-  drawSession.ctx.arc(drawSession.lastX, drawSession.lastY, drawSession.size / 2, 0, Math.PI * 2);
+  drawSession.ctx.arc(drawSession.lastX, drawSession.lastY, currentDrawWidth() / 2, 0, Math.PI * 2);
   drawSession.ctx.fill();
   drawSession.ctx.beginPath();
   drawSession.ctx.moveTo(drawSession.lastX, drawSession.lastY);
@@ -2868,7 +2872,7 @@ document.addEventListener("pointermove", function (e) {
   e.preventDefault();
   ctx.globalCompositeOperation = drawSession.erasing ? "destination-out" : "source-over";
   ctx.strokeStyle = drawSession.color;
-  ctx.lineWidth = drawSession.size;
+  ctx.lineWidth = currentDrawWidth();
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.lineTo(x, y);
